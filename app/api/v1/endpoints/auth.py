@@ -1,6 +1,3 @@
-"""
-Authentication endpoints based on user stories.
-"""
 from datetime import timedelta
 from typing import Dict, Any, Optional
 import re
@@ -26,7 +23,6 @@ router = APIRouter()
 
 
 class SignUpRequest(BaseModel):
-    """Sign up request model based on user story."""
     email: EmailStr
     password: str = Field(..., min_length=8)
     confirm_password: str = Field(..., min_length=8)
@@ -69,12 +65,10 @@ class OTPVerificationRequest(BaseModel):
 @router.post("/signup", response_model=Dict[str, Any])
 async def signup(user_data: SignUpRequest) -> Dict[str, Any]:
     """
-    User signup endpoint based on user story.
     
     Requirements:
     - Email validation
     - Password validation (8+ chars, lowercase, uppercase, numbers)
-    - Full name and address required
     - Email verification OTP
     """
     # Check if user already exists by email
@@ -89,8 +83,6 @@ async def signup(user_data: SignUpRequest) -> Dict[str, Any]:
     user_data_dict = {
         "email": user_data.email,
         "hashed_password": get_password_hash(user_data.password),
-        "full_name": user_data.full_name,
-        "address": user_data.address,
         "is_active": False,  # User needs to verify email first
         "email_verified": False,
     }
