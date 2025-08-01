@@ -26,8 +26,6 @@ class SignUpRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8)
     confirm_password: str = Field(..., min_length=8)
-    full_name: str = Field(..., min_length=1, max_length=255)
-    address: str = Field(..., min_length=1)
     
     @validator('password')
     def validate_password(cls, v):
@@ -72,7 +70,7 @@ async def signup(user_data: SignUpRequest) -> Dict[str, Any]:
     - Email verification OTP
     """
     # Check if user already exists by email
-    existing_user = await supabase.get_user_by_email(user_data.email)
+    existing_user = supabase.get_user_by_email(user_data.email)
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -88,8 +86,8 @@ async def signup(user_data: SignUpRequest) -> Dict[str, Any]:
     }
     
     try:
-        # Create user in Supabase
-        user = await supabase.create_user(user_data_dict)
+        # Create user in database
+        user = supabase.create_user(user_data_dict)
         
         # Generate and send OTP (in production, this would send an email)
         otp = "123456"  # In production, generate a real OTP
@@ -128,7 +126,7 @@ async def verify_email(verification_data: OTPVerificationRequest) -> Dict[str, A
         )
     
     # Get user by email
-    user = await supabase.get_user_by_email(verification_data.email)
+    user = supabase.get_user_by_email(verification_data.email)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -136,7 +134,7 @@ async def verify_email(verification_data: OTPVerificationRequest) -> Dict[str, A
         )
     
     # Update user to verified
-    updated_user = await supabase.update_user(user["id"], {
+    updated_user = supabase.update_user(user["id"], {
         "email_verified": True,
         "is_active": True
     })
@@ -168,7 +166,7 @@ async def signin(signin_data: SignInRequest) -> Token:
     - Handle unverified accounts
     """
     # Find user by email
-    user = await supabase.get_user_by_email(signin_data.email)
+    user = supabase.get_user_by_email(signin_data.email)
     
     if not user:
         raise HTTPException(
@@ -221,7 +219,7 @@ async def forgot_password(password_reset: PasswordReset) -> Dict[str, str]:
     - Send OTP to registered email
     - 1-minute expiration for OTP
     """
-    user = await supabase.get_user_by_email(password_reset.email)
+    user = supabase.get_user_by_email(password_reset.email)
     
     if user:
         # Generate reset token
@@ -255,7 +253,7 @@ async def reset_password(password_reset: PasswordResetConfirm) -> Dict[str, str]
             detail="Invalid or expired reset token"
         )
     
-    user = await supabase.get_user_by_email(email)
+    user = supabase.get_user_by_email(email)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -270,7 +268,7 @@ async def reset_password(password_reset: PasswordResetConfirm) -> Dict[str, str]
         )
     
     # Update password
-    await supabase.update_user(user["id"], {
+    supabase.update_user(user["id"], {
         "hashed_password": get_password_hash(password_reset.new_password)
     })
     
@@ -303,10 +301,10 @@ async def delete_account(
     - Remove all associated data
     """
     try:
-        # Delete user from Supabase
+        # Delete user from database
         # Note: This would require admin privileges in production
         # For now, we'll mark the account as deleted
-        await supabase.update_user(current_user["id"], {
+        supabase.update_user(current_user["id"], {
             "is_active": False,
             "deleted_at": "now()"
         })

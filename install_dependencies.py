@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-"""
-Simple script to install required dependencies for BigFarma Backend.
-"""
 import subprocess
 import sys
 
