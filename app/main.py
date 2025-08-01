@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from .database import create_tables
 
 from app.core.config import settings
 from app.core.logging import setup_logging
@@ -84,6 +85,10 @@ def create_application() -> FastAPI:
             status_code=exc.status_code,
             content={"detail": exc.detail}
         )
+    
+    @app.on_event("startup")
+    def startup_event():
+        create_tables()
 
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
