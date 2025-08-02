@@ -12,7 +12,7 @@ from app.schemas.accounts import (
     UserCreate, UserLogin, UserResponse, AuthResponse, TokenResponse,
     OTPRequest, OTPVerify, OTPResponse, MessageResponse, UserUpdate,
     ProfileCreate, ProfileUpdate, ProfileResponse, UserWithProfileResponse,
-    PasswordReset, ChangePasswordRequest
+    PasswordReset, ChangePasswordRequest, ForgotPasswordRequest
 )
 from app.api.v1.dependencies import get_current_user, get_current_active_user, get_current_verified_user
 from app.utils.exceptions import (
@@ -122,12 +122,21 @@ async def login(user_data: UserLogin) -> Any:
 
 @router.post("/request-otp", response_model=OTPResponse)
 async def request_otp(otp_data: OTPRequest) -> Any:
-    """Request OTP for email/phone verification."""
+    """Request OTP for email/phone verification (only if user exists)."""
     try:
+        # Check if user exists first
+        user_exists = await auth_service.check_user_exists(otp_data.email)
+        if not user_exists:
+            raise UserNotFoundError("User not found")
+        
+        # Create and send OTP
         otp_code = await auth_service.create_otp(otp_data)
         
-        # In a real application, you would send the OTP via email/SMS here
-        # For development, we'll return it in the response
+        # Send OTP via email if it's an email OTP
+        if otp_data.otp_type == "email":
+            await auth_service.send_otp_email(otp_data.email, otp_code, "email")
+        
+        # In development, we'll return the OTP code for testing
         if settings.ENVIRONMENT == "development":
             return OTPResponse(
                 message=f"OTP sent successfully. Code: {otp_code}",
@@ -139,7 +148,7 @@ async def request_otp(otp_data: OTPRequest) -> Any:
                 otp_type=otp_data.otp_type
             )
             
-    except UserNotFoundError:
+    except (UserNotFoundError, InvalidOTPError):
         raise
     except Exception as e:
         logger.error(f"Error requesting OTP: {e}")
@@ -166,6 +175,44 @@ async def verify_otp(otp_data: OTPVerify) -> Any:
         )
 
 
+@router.post("/forgot-password", response_model=OTPResponse)
+async def forgot_password(request_data: ForgotPasswordRequest) -> Any:
+    """Send OTP for password reset (only if user exists)."""
+    try:
+        # Check if user exists first
+        user_exists = await auth_service.check_user_exists(request_data.email)
+        if not user_exists:
+            raise UserNotFoundError("User not found")
+        
+        # Create OTP for password reset
+        otp_data = OTPRequest(email=request_data.email, otp_type="password_reset")
+        otp_code = await auth_service.create_otp(otp_data)
+        
+        # Send OTP via email
+        await auth_service.send_otp_email(request_data.email, otp_code, "password_reset")
+        
+        # In development, we'll return the OTP code for testing
+        if settings.ENVIRONMENT == "development":
+            return OTPResponse(
+                message=f"Password reset OTP sent successfully. Code: {otp_code}",
+                otp_type="password_reset"
+            )
+        else:
+            return OTPResponse(
+                message="Password reset OTP sent successfully",
+                otp_type="password_reset"
+            )
+            
+    except (UserNotFoundError, InvalidOTPError):
+        raise
+    except Exception as e:
+        logger.error(f"Error in forgot password: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
 @router.post("/reset-password", response_model=MessageResponse)
 async def reset_password(reset_data: PasswordReset) -> Any:
     """Reset password using OTP."""
@@ -174,7 +221,7 @@ async def reset_password(reset_data: PasswordReset) -> Any:
         otp_verify_data = OTPVerify(
             email=reset_data.email,
             otp_code=reset_data.otp_code,
-            otp_type="email"
+            otp_type="password_reset"
         )
         await auth_service.verify_otp(otp_verify_data)
         

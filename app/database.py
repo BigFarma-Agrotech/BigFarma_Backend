@@ -4,29 +4,18 @@ from sqlalchemy import create_engine, MetaData, Table, Column, String, Integer, 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from datetime import datetime
-from dotenv import load_dotenv
-import os
 
 from .config.config import settings
 
 logger = logging.getLogger(__name__)
-
-# Load environment variables
-load_dotenv()
 
 # SQLAlchemy setup
 Base = declarative_base()
 
 # Database connection
 def get_database_url() -> str:
-    """Get database URL from environment variables."""
-    user = os.getenv("user", "postgres")
-    password = os.getenv("password", "")
-    host = os.getenv("host", "db.xpypcbugicjtzjrtorse.supabase.co")
-    port = os.getenv("port", "5432")
-    dbname = os.getenv("dbname", "postgres")
-    
-    return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}?sslmode=require"
+    """Get database URL from settings."""
+    return f"postgresql+psycopg2://{settings.DB_USER}:{settings.DB_PASSWORD}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}?sslmode=require"
 
 # Create engine
 engine = create_engine(get_database_url())

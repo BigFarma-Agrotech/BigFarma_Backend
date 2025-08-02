@@ -79,8 +79,6 @@ def get_optional_user(credentials: Optional[HTTPAuthorizationCredentials] = Depe
         if user_id is None:
             return None
         
-        # Note: This is a simplified version. In a real implementation,
-        # you might want to cache user data or handle this differently
         return {"id": user_id}
         
     except Exception:
