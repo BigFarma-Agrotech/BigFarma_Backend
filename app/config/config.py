@@ -1,7 +1,7 @@
 import os
 from typing import List, Optional
 from pydantic_settings import BaseSettings
-from pydantic import validator
+from pydantic import Field, field_validator
 
 
 class Settings(BaseSettings):
@@ -19,9 +19,11 @@ class Settings(BaseSettings):
     ALLOWED_HOSTS: List[str] = ["*"]
     
     # Database (Supabase)
-    SUPABASE_URL: str = ""
-    SUPABASE_KEY: str = ""
-    SUPABASE_SERVICE_ROLE_KEY: str = ""
+    DB_USER: str = Field(..., validation_alias="DB_USER")
+    DB_PASSWORD: str = Field(..., validation_alias="DB_PASSWORD")
+    DB_HOST: str = Field(..., validation_alias="DB_HOST")
+    DB_PORT: str = Field(..., validation_alias="DB_PORT")
+    DB_NAME: str = Field(..., validation_alias="DB_NAME")
     
     # Security
     SECRET_KEY: str = "your-secret-key-here"
@@ -31,17 +33,17 @@ class Settings(BaseSettings):
     # Email (for OTP)
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
+    SMTP_USER: str = Field(default="", validation_alias="SMTP_USER")
+    SMTP_PASSWORD: str = Field(default="", validation_alias="SMTP_PASSWORD")
+    SMTP_PASSWORD: str = Field(default="", validation_alias="SMTP_PASSWORD")
+
     
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     
-    # Redis (for caching and sessions)
-    REDIS_URL: str = "redis://localhost:6379"
-    
-    @validator("ALLOWED_HOSTS", pre=True)
+    @field_validator("ALLOWED_HOSTS", mode='before')
+    @classmethod
     def assemble_cors_origins(cls, v):
         if isinstance(v, str) and not v.startswith("["):
             return [i.strip() for i in v.split(",")]
@@ -49,9 +51,11 @@ class Settings(BaseSettings):
             return v
         raise ValueError(v)
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = {
+        "env_file": ".env",
+        "case_sensitive": True,
+        "extra": "ignore"  # Ignore extra fields from environment
+    }
 
 
 # Create settings instance
