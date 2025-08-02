@@ -1,0 +1,51 @@
+# BigFarma Backend Environment Configuration
+# Copy this content to a .env file and fill in your actual values
+
+# Database Configuration (Supabase)
+DB_USER=your_supabase_user
+DB_PASSWORD=your_supabase_password
+DB_HOST=your_supabase_host
+DB_PORT=5432
+DB_NAME=your_supabase_database
+
+# Email Configuration (Gmail with App Password - Recommended)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASSWORD=your-16-character-app-password
+
+# Alternative Email Providers:
+
+# Outlook/Hotmail
+# SMTP_HOST=smtp-mail.outlook.com
+# SMTP_PORT=587
+# SMTP_USER=your-email@outlook.com
+# SMTP_PASSWORD=your-password
+
+# Yahoo Mail
+# SMTP_HOST=smtp.mail.yahoo.com
+# SMTP_PORT=587
+# SMTP_USER=your-email@yahoo.com
+# SMTP_PASSWORD=your-app-password
+
+# SendGrid (Production Recommended)
+# SMTP_HOST=smtp.sendgrid.net
+# SMTP_PORT=587
+# SMTP_USER=apikey
+# SMTP_PASSWORD=your-sendgrid-api-key
+
+# Environment
+ENVIRONMENT=development
+
+# Security
+SECRET_KEY=your-secret-key-here
+
+# API Configuration
+API_V1_STR=/api/v1
+PROJECT_NAME=BigFarma Backend API
+
+# CORS
+ALLOWED_HOSTS=["*"]
+
+# Logging
+LOG_LEVEL=INFO 

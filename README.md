@@ -1,6 +1,6 @@
 # BigFarma Backend API
 
-A production-ready FastAPI backend for BigFarma with Supabase integration, featuring comprehensive authentication, user management, and OTP verification.
+A production-ready FastAPI backend for BigFarma with comprehensive authentication, user management, and OTP verification system.
 
 ## Features
 
@@ -16,8 +16,7 @@ A production-ready FastAPI backend for BigFarma with Supabase integration, featu
 ## Tech Stack
 
 - **FastAPI** - Modern, fast web framework for building APIs
-- **Supabase** - Backend-as-a-Service with PostgreSQL
-- **SQLAlchemy** - SQL toolkit and ORM
+- **PostgreSQL** - Primary database with SQLAlchemy ORM
 - **Pydantic** - Data validation using Python type annotations
 - **JWT** - JSON Web Tokens for authentication
 - **Passlib** - Password hashing library
@@ -26,13 +25,8 @@ A production-ready FastAPI backend for BigFarma with Supabase integration, featu
 ## Project Structure
 
 ```
-bigfarma/
-├── .env.example              # Environment variables template
-├── .gitignore               # Git ignore rules
-├── requirements.txt         # Python dependencies
-├── pyproject.toml          # Project configuration
-├── README.md              # This file
-├── src/                   # Source code
+BigFarma_Backend/
+├── app/                   # Main application code
 │   ├── __init__.py
 │   ├── main.py           # FastAPI application entry point
 │   ├── config/           # Configuration management
@@ -62,9 +56,18 @@ bigfarma/
 │       ├── __init__.py
 │       ├── security.py   # Security utilities
 │       └── exceptions.py # Custom exceptions
-└── tests/                # Test files
-    ├── __init__.py
-    └── test_auth.py      # Authentication tests
+├── tests/                # Test files
+│   ├── __init__.py
+│   ├── test_auth.py      # Authentication tests
+│   └── test_otp.py       # OTP functionality tests
+├── logs/                 # Application logs
+├── requirements.txt      # Python dependencies
+├── pyproject.toml       # Project configuration
+├── run.py               # Application runner
+├── README.md           # This file
+├── OTP_FUNCTIONALITY.md # OTP system documentation
+├── EMAIL_SETUP_GUIDE.md # Email configuration guide
+└── env_template.txt     # Environment variables template
 ```
 
 ## Quick Start
@@ -72,7 +75,7 @@ bigfarma/
 ### Prerequisites
 
 - Python 3.9 or higher
-- Supabase account and project
+- PostgreSQL database
 - Virtual environment (recommended)
 
 ### Installation
@@ -100,14 +103,13 @@ bigfarma/
    # Edit .env with your Supabase credentials and other settings
    ```
 
-5. **Configure Supabase**
-   - Create a new Supabase project
-   - Get your project URL and API keys
-   - Update the `.env` file with your Supabase credentials
+5. **Configure Database**
+   - Set up PostgreSQL database
+   - Update the `.env` file with your database credentials
 
 6. **Run the application**
    ```bash
-   python -m src.main
+   python run.py
    ```
 
 The API will be available at `http://localhost:8000`
@@ -121,10 +123,12 @@ Create a `.env` file with the following variables:
 ENVIRONMENT=development
 DEBUG=true
 
-# Database (Supabase)
-SUPABASE_URL=your-supabase-url
-SUPABASE_KEY=your-supabase-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
+# Database (PostgreSQL)
+DB_USER=your_db_user
+DB_PASSWORD=your_db_password
+DB_HOST=your_db_host
+DB_PORT=5432
+DB_NAME=your_db_name
 
 # Security
 SECRET_KEY=your-secret-key-here
@@ -140,6 +144,32 @@ SMTP_PASSWORD=your-app-password
 # Logging
 LOG_LEVEL=INFO
 ```
+
+## OTP System
+
+The application includes a comprehensive OTP (One-Time Password) system for:
+
+- **Email Verification**: Verify user email addresses
+- **Password Reset**: Secure password reset functionality
+- **Rate Limiting**: Prevents abuse with 1-minute cooldown
+- **Security**: 10-minute expiration, single-use codes
+
+### Email Configuration
+
+To enable email sending for OTPs:
+
+1. **Gmail (Recommended)**:
+   - Enable 2-Factor Authentication
+   - Generate App Password at: https://myaccount.google.com/apppasswords
+   - Use the 16-character App Password
+
+2. **Alternative Providers**: Outlook, Yahoo, SendGrid
+
+See `EMAIL_SETUP_GUIDE.md` for detailed configuration instructions.
+
+### Development Mode
+
+In development mode (`ENVIRONMENT=development`), OTP codes are returned in API responses for testing.
 
 ## API Documentation
 
@@ -157,8 +187,9 @@ Once the server is running, you can access:
 |--------|----------|-------------|
 | POST | `/api/v1/auth/register` | Register a new user |
 | POST | `/api/v1/auth/login` | Login user |
-| POST | `/api/v1/auth/request-otp` | Request OTP for verification |
-| POST | `/api/v1/auth/verify-otp` | Verify OTP |
+| POST | `/api/v1/auth/request-otp` | Request OTP for email verification |
+| POST | `/api/v1/auth/verify-otp` | Verify OTP code |
+| POST | `/api/v1/auth/forgot-password` | Request password reset OTP |
 | POST | `/api/v1/auth/reset-password` | Reset password using OTP |
 | GET | `/api/v1/auth/me` | Get current user info |
 | PUT | `/api/v1/auth/me` | Update current user |
@@ -204,67 +235,68 @@ curl -X GET "http://localhost:8000/api/v1/auth/me" \
 pytest
 
 # Run with coverage
-pytest --cov=src
+pytest --cov=app
 
 # Run specific test file
 pytest tests/test_auth.py
+pytest tests/test_otp.py
 ```
 
 ### Code Quality
 
 ```bash
 # Format code
-black src/ tests/
+black app/ tests/
 
 # Sort imports
-isort src/ tests/
+isort app/ tests/
 
 # Lint code
-flake8 src/ tests/
+flake8 app/ tests/
 
 # Type checking
-mypy src/
+mypy app/
 ```
 
 ### Database Setup
 
-The application uses Supabase as the backend. You'll need to:
+The application uses PostgreSQL as the database. You'll need to:
 
-1. Create tables in your Supabase project
-2. Set up Row Level Security (RLS) policies
-3. Configure authentication settings
+1. Create tables in your PostgreSQL database
+2. Set up proper indexes and constraints
+3. Configure database permissions
 
 Example SQL for creating tables:
 
 ```sql
 -- Users table
 CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id VARCHAR PRIMARY KEY,
     email VARCHAR UNIQUE NOT NULL,
     phone VARCHAR UNIQUE,
     password_hash VARCHAR NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
     is_verified BOOLEAN DEFAULT FALSE,
     is_superuser BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );
 
 -- OTP table
 CREATE TABLE otps (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    id VARCHAR PRIMARY KEY,
+    user_id VARCHAR REFERENCES users(id) ON DELETE CASCADE,
     otp_code VARCHAR NOT NULL,
     otp_type VARCHAR NOT NULL,
     is_used BOOLEAN DEFAULT FALSE,
-    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Profiles table
 CREATE TABLE profiles (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+    id VARCHAR PRIMARY KEY,
+    user_id VARCHAR REFERENCES users(id) ON DELETE CASCADE UNIQUE,
     first_name VARCHAR,
     last_name VARCHAR,
     avatar_url VARCHAR,
@@ -276,8 +308,8 @@ CREATE TABLE profiles (
     state VARCHAR,
     country VARCHAR,
     postal_code VARCHAR,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );
 ```
 
@@ -288,7 +320,7 @@ CREATE TABLE profiles (
 1. **Environment Variables**: Set `ENVIRONMENT=production` and `DEBUG=false`
 2. **Secret Key**: Use a strong, unique secret key
 3. **CORS**: Configure `ALLOWED_HOSTS` with your domain
-4. **Database**: Use production Supabase instance
+4. **Database**: Use production PostgreSQL instance
 5. **Logging**: Configure proper log aggregation
 6. **HTTPS**: Use HTTPS in production
 
@@ -302,9 +334,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src/ ./src/
+COPY app/ ./app/
 
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 ## Contributing

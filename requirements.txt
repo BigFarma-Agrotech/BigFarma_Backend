@@ -3,7 +3,6 @@ fastapi
 uvicorn[standard]
 
 # Database
-supabase
 sqlalchemy
 psycopg2-binary
 
