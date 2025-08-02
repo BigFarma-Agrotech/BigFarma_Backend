@@ -7,12 +7,12 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-from .database import create_tables
+from app.database import create_tables
 
-from app.core.config import settings
-from app.core.logging import setup_logging
+from app.config.config import settings
+from app.config.logging import setup_logging
 from app.api.v1.api import api_router
-from app.core.exceptions import CustomException
+from app.utils.exceptions import CustomException
 
 # Initialize structured logging
 setup_logging()

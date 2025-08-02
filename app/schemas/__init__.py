@@ -1,1 +1,1 @@
-# Pydantic schemas for request/response models 
+# Pydantic schemas package 

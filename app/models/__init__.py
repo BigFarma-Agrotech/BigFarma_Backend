@@ -1,1 +1,1 @@
-# Pydantic models for data validation - User models only 
+# Database models package 
