@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, validator
+from pydantic import BaseModel, EmailStr, field_validator, ConfigDict
 from typing import Optional
 from datetime import datetime
 
@@ -27,7 +27,8 @@ class ProfileBase(BaseModel):
 class UserCreate(UserBase):
     password: str
     
-    @validator('password')
+    @field_validator('password')
+    @classmethod
     def validate_password(cls, v):
         if len(v) < 8:
             raise ValueError('Password must be at least 8 characters long')
@@ -57,10 +58,11 @@ class OTPRequest(BaseModel):
     email: EmailStr
     otp_type: str = "email"  # email, phone
     
-    @validator('otp_type')
+    @field_validator('otp_type')
+    @classmethod
     def validate_otp_type(cls, v):
-        if v not in ['email', 'phone']:
-            raise ValueError('OTP type must be either email or phone')
+        if v not in ['email', 'phone', 'password_reset']:
+            raise ValueError('OTP type must be either email, phone, or password_reset')
         return v
 
 
@@ -68,6 +70,17 @@ class OTPVerify(BaseModel):
     email: EmailStr
     otp_code: str
     otp_type: str = "email"
+    
+    @field_validator('otp_type')
+    @classmethod
+    def validate_otp_type(cls, v):
+        if v not in ['email', 'phone', 'password_reset']:
+            raise ValueError('OTP type must be either email, phone, or password_reset')
+        return v
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
 
 
 class PasswordReset(BaseModel):
@@ -75,7 +88,8 @@ class PasswordReset(BaseModel):
     otp_code: str
     new_password: str
     
-    @validator('new_password')
+    @field_validator('new_password')
+    @classmethod
     def validate_password(cls, v):
         if len(v) < 8:
             raise ValueError('Password must be at least 8 characters long')
@@ -91,8 +105,7 @@ class UserResponse(UserBase):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProfileResponse(ProfileBase):
@@ -101,8 +114,7 @@ class ProfileResponse(ProfileBase):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserWithProfileResponse(UserResponse):
@@ -138,7 +150,8 @@ class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
     
-    @validator('new_password')
+    @field_validator('new_password')
+    @classmethod
     def validate_password(cls, v):
         if len(v) < 8:
             raise ValueError('Password must be at least 8 characters long')
