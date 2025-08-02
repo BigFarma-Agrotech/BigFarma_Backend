@@ -1,0 +1,29 @@
+{"timestamp": "2025-08-02 16:17:33", "level": "INFO", "name": "app.main", "message": "Starting BigFarma Backend API"}
+{"timestamp": "2025-08-02 16:20:31", "level": "ERROR", "name": "app.services.auth", "message": "Error creating user: (psycopg2.OperationalError) could not translate host name "db.xpypcbugicjtzjrtorse.supabase.co" to address: Name or service not known
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)"}
+{"timestamp": "2025-08-02 16:20:31", "level": "ERROR", "name": "app.api.v1.endpoints.auth", "message": "Error in user registration: (psycopg2.OperationalError) could not translate host name "db.xpypcbugicjtzjrtorse.supabase.co" to address: Name or service not known
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)"}
+{"timestamp": "2025-08-02 16:21:20", "level": "INFO", "name": "app.main", "message": "Shutting down BigFarma Backend API"}
+{"timestamp": "2025-08-02 16:21:25", "level": "INFO", "name": "app.main", "message": "Starting BigFarma Backend API"}
+{"timestamp": "2025-08-02 16:21:27", "level": "ERROR", "name": "app.services.auth", "message": "Error creating user: (psycopg2.OperationalError) could not translate host name "db.xpypcbugicjtzjrtorse.supabase.co" to address: Name or service not known
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)"}
+{"timestamp": "2025-08-02 16:21:27", "level": "ERROR", "name": "app.api.v1.endpoints.auth", "message": "Error in user registration: (psycopg2.OperationalError) could not translate host name "db.xpypcbugicjtzjrtorse.supabase.co" to address: Name or service not known
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)"}
+{"timestamp": "2025-08-02 16:24:30", "level": "ERROR", "name": "app.services.auth", "message": "Error creating user: (psycopg2.OperationalError) could not translate host name "db.xpypcbugicjtzjrtorse.supabase.co" to address: Name or service not known
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)"}
+{"timestamp": "2025-08-02 16:24:30", "level": "ERROR", "name": "app.api.v1.endpoints.auth", "message": "Error in user registration: (psycopg2.OperationalError) could not translate host name "db.xpypcbugicjtzjrtorse.supabase.co" to address: Name or service not known
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)"}
+{"timestamp": "2025-08-02 16:24:33", "level": "INFO", "name": "app.main", "message": "Shutting down BigFarma Backend API"}
+{"timestamp": "2025-08-02 16:25:00", "level": "INFO", "name": "app.main", "message": "Starting BigFarma Backend API"}
+{"timestamp": "2025-08-02 16:36:00", "level": "ERROR", "name": "app.services.auth", "message": "Error creating user: (psycopg2.OperationalError) could not translate host name "db.xpypcbugicjtzjrtorse.supabase.co" to address: Name or service not known
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)"}
+{"timestamp": "2025-08-02 16:36:00", "level": "ERROR", "name": "app.api.v1.endpoints.auth", "message": "Error in user registration: (psycopg2.OperationalError) could not translate host name "db.xpypcbugicjtzjrtorse.supabase.co" to address: Name or service not known
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)"}
