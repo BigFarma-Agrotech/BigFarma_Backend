@@ -2,6 +2,9 @@ import logging
 import random
 import string
 import uuid
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from jose import JWTError, jwt
@@ -195,6 +198,18 @@ class AuthService:
         finally:
             db.close()
     
+    async def check_user_exists(self, email: str) -> bool:
+        """Check if a user exists by email (without exposing sensitive data)."""
+        db = get_db()
+        try:
+            user = db.query(User).filter(User.email == email).first()
+            return user is not None
+        except Exception as e:
+            logger.error(f"Error checking if user exists: {e}")
+            raise
+        finally:
+            db.close()
+    
     async def create_otp(self, otp_data: OTPRequest) -> str:
         """Create and store an OTP for user verification."""
         db = get_db()
@@ -202,6 +217,16 @@ class AuthService:
             user = db.query(User).filter(User.email == otp_data.email).first()
             if not user:
                 raise UserNotFoundError("User not found")
+            
+            # Check for recent OTP requests (rate limiting)
+            recent_otp = db.query(OTP).filter(
+                OTP.user_id == user.id,
+                OTP.otp_type == otp_data.otp_type,
+                OTP.created_at >= datetime.utcnow() - timedelta(minutes=1)  # 1 minute cooldown
+            ).first()
+            
+            if recent_otp:
+                raise InvalidOTPError("Please wait at least 1 minute before requesting another OTP")
             
             # Generate OTP
             otp_code = self.generate_otp()
@@ -220,7 +245,7 @@ class AuthService:
             db.add(otp)
             db.commit()
             
-            logger.info(f"OTP created for user: {otp_data.email}")
+            logger.info(f"OTP created for user: {otp_data.email}, type: {otp_data.otp_type}")
             return otp_code
                 
         except Exception as e:
@@ -260,9 +285,10 @@ class AuthService:
             otp.is_used = True
             db.commit()
             
-            # Mark user as verified
-            user.is_verified = True
-            db.commit()
+            # Mark user as verified only for email verification, not password reset
+            if otp_data.otp_type != "password_reset":
+                user.is_verified = True
+                db.commit()
             
             logger.info(f"OTP verified successfully for user: {otp_data.email}")
             return True
@@ -303,6 +329,94 @@ class AuthService:
             raise
         finally:
             db.close()
+    
+    async def send_otp_email(self, email: str, otp_code: str, otp_type: str = "email") -> None:
+        """Send OTP code via email."""
+        try:
+            # Check if SMTP is configured
+            if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
+                logger.warning("SMTP credentials not configured. OTP code: %s", otp_code)
+                return
+            
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = settings.SMTP_USER
+            msg['To'] = email
+            
+            # Set subject and body based on OTP type
+            if otp_type == "password_reset":
+                msg['Subject'] = "BigFarma - Password Reset OTP"
+                body = f"""
+                <html>
+                <body>
+                    <h2>BigFarma Password Reset</h2>
+                    <p>You requested a password reset for your BigFarma account.</p>
+                    <p>Your password reset code is: <strong style="font-size: 24px; color: #dc3545;">{otp_code}</strong></p>
+                    <p>This code will expire in 10 minutes.</p>
+                    <p>If you didn't request this password reset, please ignore this email and your password will remain unchanged.</p>
+                    <br>
+                    <p>Best regards,<br>BigFarma Team</p>
+                </body>
+                </html>
+                """
+            else:
+                msg['Subject'] = "BigFarma - Email Verification OTP"
+                body = f"""
+                <html>
+                <body>
+                    <h2>BigFarma Email Verification</h2>
+                    <p>You requested an email verification code for your BigFarma account.</p>
+                    <p>Your verification code is: <strong style="font-size: 24px; color: #007bff;">{otp_code}</strong></p>
+                    <p>This code will expire in 10 minutes.</p>
+                    <p>If you didn't request this code, please ignore this email.</p>
+                    <br>
+                    <p>Best regards,<br>BigFarma Team</p>
+                </body>
+                </html>
+                """
+            
+            msg.attach(MIMEText(body, 'html'))
+            
+            # Send email with better error handling
+            logger.info(f"Attempting to send OTP email to {email} via {settings.SMTP_HOST}:{settings.SMTP_PORT}")
+            
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
+            server.starttls()
+            
+            # Login with detailed error handling
+            try:
+                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                logger.info("SMTP login successful")
+            except smtplib.SMTPAuthenticationError as auth_error:
+                logger.error(f"SMTP authentication failed: {auth_error}")
+                logger.error("Please check your SMTP credentials. For Gmail, use App Password instead of regular password.")
+                server.quit()
+                return
+            except Exception as login_error:
+                logger.error(f"SMTP login error: {login_error}")
+                server.quit()
+                return
+            
+            # Send the email
+            try:
+                text = msg.as_string()
+                server.sendmail(settings.SMTP_USER, email, text)
+                server.quit()
+                logger.info(f"OTP email sent successfully to {email} for {otp_type}")
+            except Exception as send_error:
+                logger.error(f"Error sending email: {send_error}")
+                server.quit()
+                return
+                
+        except smtplib.SMTPAuthenticationError as e:
+            logger.error(f"SMTP authentication error for {email}: {e}")
+            logger.error("For Gmail: Use App Password instead of regular password")
+        except smtplib.SMTPException as e:
+            logger.error(f"SMTP error for {email}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error sending OTP email to {email}: {e}")
+            # Don't raise the exception to avoid breaking the process
+            # The OTP is still created and stored in the database
 
 
 # Create service instance
