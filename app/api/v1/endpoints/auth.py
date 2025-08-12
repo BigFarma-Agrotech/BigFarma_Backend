@@ -28,24 +28,25 @@ router = APIRouter()
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserCreate) -> Any:
-    """Register a new user."""
+    """Register a new user with email or phone."""
     try:
-        # Create user
         user = await auth_service.create_user(user_data)
         
-        # Create access token
         access_token = auth_service.create_access_token(
-            data={"sub": user["id"], "email": user["email"]}
+            data={
+                "sub": user["id"],
+                "email": user.get("email"),
+                "phone": user.get("phone"),
+            }
         )
-        
-        # Get user profile (will be None for new users)
+
         profile = await auth_service.get_user_profile(user["id"])
-        
-        # Prepare response
+
         user_response = UserWithProfileResponse(
             id=user["id"],
-            email=user["email"],
+            email=user.get("email"),
             phone=user.get("phone"),
+            user_category=user.get("user_category"),  # Will be None initially
             is_active=user["is_active"],
             is_verified=user["is_verified"],
             is_superuser=user.get("is_superuser", False),
@@ -53,17 +54,24 @@ async def register(user_data: UserCreate) -> Any:
             updated_at=user["updated_at"],
             profile=ProfileResponse(**profile) if profile else None
         )
-        
+
         token_response = TokenResponse(
             access_token=access_token,
             token_type="bearer",
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         )
-        
-        return AuthResponse(user=user_response, token=token_response)
-        
-    except UserAlreadyExistsError:
-        raise
+
+        return {
+            "message": "User registered successfully. Please complete your profile setup.",
+            "user": user_response,
+            "token": token_response
+        }
+
+    except UserAlreadyExistsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
     except Exception as e:
         logger.error(f"Error in user registration: {e}")
         raise HTTPException(
@@ -72,18 +80,24 @@ async def register(user_data: UserCreate) -> Any:
         )
 
 
+
 @router.post("/login", response_model=AuthResponse)
 async def login(user_data: UserLogin) -> Any:
-    """Login user with email and password."""
+    """Login user with email/phone and password."""
     try:
         # Authenticate user
         user = await auth_service.authenticate_user(user_data)
         if not user:
-            raise InvalidCredentialsError("Invalid email or password")
+            raise InvalidCredentialsError("Invalid credentials")
         
         # Create access token
         access_token = auth_service.create_access_token(
-            data={"sub": user["id"], "email": user["email"]}
+            data={
+                "sub": user["id"],
+                "email": user.get("email"),
+                "phone": user.get("phone"),
+                "category": user["user_category"]
+            }
         )
         
         # Get user profile
@@ -91,15 +105,9 @@ async def login(user_data: UserLogin) -> Any:
         
         # Prepare response
         user_response = UserWithProfileResponse(
-            id=user["id"],
-            email=user["email"],
+            email=user.get("email"),
             phone=user.get("phone"),
-            is_active=user["is_active"],
-            is_verified=user["is_verified"],
-            is_superuser=user.get("is_superuser", False),
-            created_at=user["created_at"],
-            updated_at=user["updated_at"],
-            profile=ProfileResponse(**profile) if profile else None
+            user_category=user["user_category"],
         )
         
         token_response = TokenResponse(
@@ -248,138 +256,6 @@ async def reset_password(reset_data: PasswordReset) -> Any:
         raise
     except Exception as e:
         logger.error(f"Error resetting password: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
-        )
-
-
-@router.get("/me", response_model=UserWithProfileResponse)
-async def get_current_user_info(current_user: dict = Depends(get_current_active_user)) -> Any:
-    """Get current user information."""
-    try:
-        profile = await auth_service.get_user_profile(current_user["id"])
-        
-        return UserWithProfileResponse(
-            id=current_user["id"],
-            email=current_user["email"],
-            phone=current_user.get("phone"),
-            is_active=current_user["is_active"],
-            is_verified=current_user["is_verified"],
-            is_superuser=current_user.get("is_superuser", False),
-            created_at=current_user["created_at"],
-            updated_at=current_user["updated_at"],
-            profile=ProfileResponse(**profile) if profile else None
-        )
-        
-    except Exception as e:
-        logger.error(f"Error getting current user info: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
-        )
-
-
-@router.put("/me", response_model=UserResponse)
-async def update_current_user(
-    user_update: UserUpdate,
-    current_user: dict = Depends(get_current_active_user)
-) -> Any:
-    """Update current user information."""
-    try:
-        update_data = user_update.dict(exclude_unset=True)
-        if not update_data:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No data provided for update"
-            )
-        
-        # Update user using SQLAlchemy
-        db = get_db()
-        try:
-            user_obj = db.query(User).filter(User.id == current_user["id"]).first()
-            if user_obj:
-                for key, value in update_data.items():
-                    setattr(user_obj, key, value)
-                db.commit()
-                db.refresh(user_obj)
-                
-                return UserResponse(
-                    id=user_obj.id,
-                    email=user_obj.email,
-                    phone=user_obj.phone,
-                    is_active=user_obj.is_active,
-                    is_verified=user_obj.is_verified,
-                    is_superuser=user_obj.is_superuser,
-                    created_at=user_obj.created_at,
-                    updated_at=user_obj.updated_at
-                )
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="User not found"
-                )
-        finally:
-            db.close()
-            
-    except Exception as e:
-        logger.error(f"Error updating current user: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
-        )
-
-
-@router.post("/me/profile", response_model=ProfileResponse, status_code=status.HTTP_201_CREATED)
-async def create_profile(
-    profile_data: ProfileCreate,
-    current_user: dict = Depends(get_current_active_user)
-) -> Any:
-    """Create user profile."""
-    try:
-        # Check if profile already exists
-        existing_profile = await auth_service.get_user_profile(current_user["id"])
-        if existing_profile:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Profile already exists"
-            )
-        
-        # Create profile using SQLAlchemy
-        db = get_db()
-        try:
-            profile = Profile(
-                id=str(uuid.uuid4()),
-                user_id=current_user["id"],
-                **profile_data.dict()
-            )
-            
-            db.add(profile)
-            db.commit()
-            db.refresh(profile)
-            
-            return ProfileResponse(
-                id=profile.id,
-                user_id=profile.user_id,
-                first_name=profile.first_name,
-                last_name=profile.last_name,
-                avatar_url=profile.avatar_url,
-                bio=profile.bio,
-                date_of_birth=profile.date_of_birth,
-                gender=profile.gender,
-                address=profile.address,
-                city=profile.city,
-                state=profile.state,
-                country=profile.country,
-                postal_code=profile.postal_code,
-                created_at=profile.created_at,
-                updated_at=profile.updated_at
-            )
-        finally:
-            db.close()
-            
-    except Exception as e:
-        logger.error(f"Error creating profile: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"

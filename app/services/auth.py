@@ -73,18 +73,24 @@ class AuthService:
         return ''.join(random.choices(string.digits, k=length))
     
     async def create_user(self, user_data: UserCreate) -> Dict[str, Any]:
-        """Create a new user."""
+        """Create a new user with email or phone and password."""
         db = get_db()
         try:
-            # Check if user already exists
-            existing_user = db.query(User).filter(User.email == user_data.email).first()
-            if existing_user:
-                raise UserAlreadyExistsError("User with this email already exists")
+            # Check if user already exists by email or phone
+            if user_data.email:
+                existing_user = db.query(User).filter(User.email == user_data.email).first()
+                if existing_user:
+                    raise UserAlreadyExistsError("User with this email already exists")
+            
+            if user_data.phone:
+                existing_user = db.query(User).filter(User.phone == user_data.phone).first()
+                if existing_user:
+                    raise UserAlreadyExistsError("User with this phone already exists")
             
             # Hash password
             hashed_password = self.get_password_hash(user_data.password)
             
-            # Create user
+            # Create user (user_category is None by default)
             user = User(
                 id=str(uuid.uuid4()),
                 email=user_data.email,
@@ -99,7 +105,7 @@ class AuthService:
             db.commit()
             db.refresh(user)
             
-            logger.info(f"User created successfully: {user.email}")
+            logger.info(f"User created successfully: {user.email or user.phone}")
             return {
                 "id": user.id,
                 "email": user.email,
@@ -119,10 +125,17 @@ class AuthService:
             db.close()
     
     async def authenticate_user(self, user_data: UserLogin) -> Optional[Dict[str, Any]]:
-        """Authenticate a user with email and password."""
+        """Authenticate a user with email/phone and password."""
         db = get_db()
         try:
-            user = db.query(User).filter(User.email == user_data.email).first()
+            # Try to find user by email or phone
+            if user_data.email:
+                user = db.query(User).filter(User.email == user_data.email).first()
+            elif user_data.phone:
+                user = db.query(User).filter(User.phone == user_data.phone).first()
+            else:
+                return None
+            
             if not user:
                 return None
             
@@ -136,6 +149,7 @@ class AuthService:
                 "id": user.id,
                 "email": user.email,
                 "phone": user.phone,
+                "user_category": user.user_category,
                 "password_hash": user.password_hash,
                 "is_active": user.is_active,
                 "is_verified": user.is_verified,
@@ -160,6 +174,7 @@ class AuthService:
                     "id": user.id,
                     "email": user.email,
                     "phone": user.phone,
+                    "user_category": user.user_category,
                     "password_hash": user.password_hash,
                     "is_active": user.is_active,
                     "is_verified": user.is_verified,
@@ -174,6 +189,31 @@ class AuthService:
         finally:
             db.close()
     
+    async def get_user_by_phone(self, phone: str) -> Optional[Dict[str, Any]]:
+        """Get user by phone number."""
+        db = get_db()
+        try:
+            user = db.query(User).filter(User.phone == phone).first()
+            if user:
+                return {
+                    "id": user.id,
+                    "email": user.email,
+                    "phone": user.phone,
+                    "user_category": user.user_category,
+                    "password_hash": user.password_hash,
+                    "is_active": user.is_active,
+                    "is_verified": user.is_verified,
+                    "is_superuser": user.is_superuser,
+                    "created_at": user.created_at,
+                    "updated_at": user.updated_at
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user by phone: {e}")
+            raise
+        finally:
+            db.close()
+    
     async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get user by ID."""
         db = get_db()
@@ -184,6 +224,7 @@ class AuthService:
                     "id": user.id,
                     "email": user.email,
                     "phone": user.phone,
+                    "user_category": user.user_category,
                     "password_hash": user.password_hash,
                     "is_active": user.is_active,
                     "is_verified": user.is_verified,
@@ -198,11 +239,16 @@ class AuthService:
         finally:
             db.close()
     
-    async def check_user_exists(self, email: str) -> bool:
-        """Check if a user exists by email (without exposing sensitive data)."""
+    async def check_user_exists(self, email: str = None, phone: str = None) -> bool:
+        """Check if a user exists by email or phone."""
         db = get_db()
         try:
-            user = db.query(User).filter(User.email == email).first()
+            if email:
+                user = db.query(User).filter(User.email == email).first()
+            elif phone:
+                user = db.query(User).filter(User.phone == phone).first()
+            else:
+                return False
             return user is not None
         except Exception as e:
             logger.error(f"Error checking if user exists: {e}")
@@ -214,7 +260,14 @@ class AuthService:
         """Create and store an OTP for user verification."""
         db = get_db()
         try:
-            user = db.query(User).filter(User.email == otp_data.email).first()
+            # Find user by email or phone
+            if otp_data.email:
+                user = db.query(User).filter(User.email == otp_data.email).first()
+            elif otp_data.phone:
+                user = db.query(User).filter(User.phone == otp_data.phone).first()
+            else:
+                raise UserNotFoundError("Email or phone must be provided")
+            
             if not user:
                 raise UserNotFoundError("User not found")
             
@@ -245,7 +298,7 @@ class AuthService:
             db.add(otp)
             db.commit()
             
-            logger.info(f"OTP created for user: {otp_data.email}, type: {otp_data.otp_type}")
+            logger.info(f"OTP created for user: {otp_data.email or otp_data.phone}, type: {otp_data.otp_type}")
             return otp_code
                 
         except Exception as e:
@@ -259,7 +312,14 @@ class AuthService:
         """Verify an OTP code."""
         db = get_db()
         try:
-            user = db.query(User).filter(User.email == otp_data.email).first()
+            # Find user by email or phone
+            if otp_data.email:
+                user = db.query(User).filter(User.email == otp_data.email).first()
+            elif otp_data.phone:
+                user = db.query(User).filter(User.phone == otp_data.phone).first()
+            else:
+                raise UserNotFoundError("Email or phone must be provided")
+            
             if not user:
                 raise UserNotFoundError("User not found")
             
@@ -290,7 +350,7 @@ class AuthService:
                 user.is_verified = True
                 db.commit()
             
-            logger.info(f"OTP verified successfully for user: {otp_data.email}")
+            logger.info(f"OTP verified successfully for user: {otp_data.email or otp_data.phone}")
             return True
             
         except Exception as e:
@@ -312,14 +372,9 @@ class AuthService:
                     "first_name": profile.first_name,
                     "last_name": profile.last_name,
                     "avatar_url": profile.avatar_url,
-                    "bio": profile.bio,
-                    "date_of_birth": profile.date_of_birth,
-                    "gender": profile.gender,
                     "address": profile.address,
-                    "city": profile.city,
-                    "state": profile.state,
-                    "country": profile.country,
-                    "postal_code": profile.postal_code,
+                    "phone": profile.phone,
+                    "email": profile.email,
                     "created_at": profile.created_at,
                     "updated_at": profile.updated_at
                 }
@@ -377,36 +432,14 @@ class AuthService:
             
             msg.attach(MIMEText(body, 'html'))
             
-            # Send email with better error handling
-            logger.info(f"Attempting to send OTP email to {email} via {settings.SMTP_HOST}:{settings.SMTP_PORT}")
-            
+            # Send email
             server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
             server.starttls()
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            server.sendmail(settings.SMTP_USER, email, msg.as_string())
+            server.quit()
             
-            # Login with detailed error handling
-            try:
-                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-                logger.info("SMTP login successful")
-            except smtplib.SMTPAuthenticationError as auth_error:
-                logger.error(f"SMTP authentication failed: {auth_error}")
-                logger.error("Please check your SMTP credentials. For Gmail, use App Password instead of regular password.")
-                server.quit()
-                return
-            except Exception as login_error:
-                logger.error(f"SMTP login error: {login_error}")
-                server.quit()
-                return
-            
-            # Send the email
-            try:
-                text = msg.as_string()
-                server.sendmail(settings.SMTP_USER, email, text)
-                server.quit()
-                logger.info(f"OTP email sent successfully to {email} for {otp_type}")
-            except Exception as send_error:
-                logger.error(f"Error sending email: {send_error}")
-                server.quit()
-                return
+            logger.info(f"OTP email sent successfully to {email} for {otp_type}")
                 
         except smtplib.SMTPAuthenticationError as e:
             logger.error(f"SMTP authentication error for {email}: {e}")
@@ -415,9 +448,7 @@ class AuthService:
             logger.error(f"SMTP error for {email}: {e}")
         except Exception as e:
             logger.error(f"Unexpected error sending OTP email to {email}: {e}")
-            # Don't raise the exception to avoid breaking the process
-            # The OTP is still created and stored in the database
 
 
 # Create service instance
-auth_service = AuthService() 
+auth_service = AuthService()

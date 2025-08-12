@@ -1,9 +1,9 @@
 import logging
-from typing import Optional
-from sqlalchemy import create_engine, MetaData, Table, Column, String, Integer, Boolean, DateTime, Text
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine, MetaData, Table, Column, String, Integer, Boolean, DateTime, Text, Enum
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from datetime import datetime
+import enum
 
 from .config.config import settings
 
@@ -11,6 +11,12 @@ logger = logging.getLogger(__name__)
 
 # SQLAlchemy setup
 Base = declarative_base()
+
+# User categories enum
+class UserCategory(str, enum.Enum):
+    """User categories for the platform."""
+    FARMER = "farmer"
+    CONSUMER = "consumer"
 
 # Database connection
 def get_database_url() -> str:
@@ -21,15 +27,15 @@ def get_database_url() -> str:
 engine = create_engine(get_database_url())
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Database models
 class User(Base):
     __tablename__ = "users"
     
     id = Column(String, primary_key=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    phone = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=True)
+    phone = Column(String, unique=True, index=True, nullable=True)
     password_hash = Column(String, nullable=False)
-    is_active = Column(Boolean, default=True)
+    user_category = Column(Enum(UserCategory), nullable=True)
+    is_active = Column(Boolean, default=False)
     is_verified = Column(Boolean, default=False)
     is_superuser = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -53,17 +59,40 @@ class Profile(Base):
     
     id = Column(String, primary_key=True)
     user_id = Column(String, unique=True, nullable=False)
-    first_name = Column(String)
-    last_name = Column(String)
+    first_name = Column(String, nullable=False)
+    last_name = Column(String, nullable=False)
     avatar_url = Column(String)
-    bio = Column(Text)
-    date_of_birth = Column(DateTime)
-    gender = Column(String)
-    address = Column(Text)
-    city = Column(String)
-    state = Column(String)
-    country = Column(String)
-    postal_code = Column(String)
+    address = Column(Text, nullable=False)
+    phone = Column(String)
+    email = Column(String)
+    user_category = Column(Enum(UserCategory), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class FarmerProfile(Base):
+    __tablename__ = "farmer_profiles"
+    
+    id = Column(String, primary_key=True)
+    user_id = Column(String, unique=True, nullable=False)
+    valid_id_url = Column(String, nullable=False)
+    farm_type = Column(String, nullable=False)
+    farm_image_url = Column(String)
+    farm_location = Column(Text, nullable=False)
+    farm_size = Column(String)
+    years_experience = Column(Integer)
+    is_verified = Column(Boolean, default=False)
+    verification_date = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ConsumerProfile(Base):
+    __tablename__ = "consumer_profiles"
+    
+    id = Column(String, primary_key=True)
+    user_id = Column(String, unique=True, nullable=False)
+    product_preferences = Column(Text, default='[]')
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
