@@ -292,6 +292,7 @@ AttributeError: module 'bcrypt' has no attribute '__about__'
 {"timestamp": "2025-08-02 20:46:29", "level": "INFO", "name": "app.main", "message": "Shutting down BigFarma Backend API"}
 {"timestamp": "2025-08-02 20:46:33", "level": "INFO", "name": "app.main", "message": "Starting BigFarma Backend API"}
 {"timestamp": "2025-08-02 21:06:30", "level": "INFO", "name": "app.main", "message": "Shutting down BigFarma Backend API"}
+<<<<<<< HEAD
 {"timestamp": "2025-08-12 15:04:09", "level": "INFO", "name": "app.main", "message": "Starting BigFarma Backend API"}
 {"timestamp": "2025-08-12 15:08:53", "level": "ERROR", "name": "app.services.auth", "message": "Error creating user: (psycopg2.errors.UndefinedTable) relation "users" does not exist
 LINE 2: FROM users 
@@ -810,3 +811,7 @@ DETAIL:  Failing row contains (3886e7cd-e166-4cca-a8fe-80360753c44f, ngereharry5
 {"timestamp": "2025-08-12 22:18:57", "level": "INFO", "name": "app.main", "message": "Starting BigFarma Backend API"}
 {"timestamp": "2025-08-12 22:20:05", "level": "INFO", "name": "app.main", "message": "Shutting down BigFarma Backend API"}
 {"timestamp": "2025-08-12 22:20:12", "level": "INFO", "name": "app.main", "message": "Starting BigFarma Backend API"}
+=======
+{"timestamp": "2025-08-04 18:05:04", "level": "INFO", "name": "app.main", "message": "Starting BigFarma Backend API"}
+{"timestamp": "2025-08-04 18:06:50", "level": "INFO", "name": "app.main", "message": "Shutting down BigFarma Backend API"}
+>>>>>>> refs/remotes/origin/main
