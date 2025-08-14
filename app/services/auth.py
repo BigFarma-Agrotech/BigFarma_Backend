@@ -96,7 +96,7 @@ class AuthService:
                 email=user_data.email,
                 phone=user_data.phone,
                 password_hash=hashed_password,
-                is_active=True,
+                is_active=False,
                 is_verified=False,
                 is_superuser=False
             )
@@ -348,6 +348,7 @@ class AuthService:
             # Mark user as verified only for email verification, not password reset
             if otp_data.otp_type != "password_reset":
                 user.is_verified = True
+                user.is_active = True
                 db.commit()
             
             logger.info(f"OTP verified successfully for user: {otp_data.email or otp_data.phone}")

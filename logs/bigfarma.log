@@ -815,3 +815,35 @@ DETAIL:  Failing row contains (3886e7cd-e166-4cca-a8fe-80360753c44f, ngereharry5
 {"timestamp": "2025-08-04 18:05:04", "level": "INFO", "name": "app.main", "message": "Starting BigFarma Backend API"}
 {"timestamp": "2025-08-04 18:06:50", "level": "INFO", "name": "app.main", "message": "Shutting down BigFarma Backend API"}
 >>>>>>> refs/remotes/origin/main
+{"timestamp": "2025-08-13 18:08:23", "level": "INFO", "name": "app.main", "message": "Starting BigFarma Backend API"}
+{"timestamp": "2025-08-14 09:43:13", "level": "INFO", "name": "app.main", "message": "Starting BigFarma Backend API"}
+{"timestamp": "2025-08-14 09:43:50", "level": "INFO", "name": "app.services.auth", "message": "OTP created for user: hoganevelyn5@gmail.com, type: email"}
+{"timestamp": "2025-08-14 09:43:54", "level": "INFO", "name": "app.services.auth", "message": "OTP email sent successfully to hoganevelyn5@gmail.com for email"}
+{"timestamp": "2025-08-14 12:24:06", "level": "ERROR", "name": "app.services.auth", "message": "Error checking if user exists: (psycopg2.OperationalError) server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+[SQL: SELECT users.id AS users_id, users.email AS users_email, users.phone AS users_phone, users.password_hash AS users_password_hash, users.user_category AS users_user_category, users.is_active AS users_is_active, users.is_verified AS users_is_verified, users.is_superuser AS users_is_superuser, users.created_at AS users_created_at, users.updated_at AS users_updated_at 
+FROM users 
+WHERE users.email = %(email_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'email_1': 'ngereharry5@gmail.com', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)"}
+{"timestamp": "2025-08-14 12:24:06", "level": "ERROR", "name": "app.api.v1.endpoints.auth", "message": "Error requesting OTP: (psycopg2.OperationalError) server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+[SQL: SELECT users.id AS users_id, users.email AS users_email, users.phone AS users_phone, users.password_hash AS users_password_hash, users.user_category AS users_user_category, users.is_active AS users_is_active, users.is_verified AS users_is_verified, users.is_superuser AS users_is_superuser, users.created_at AS users_created_at, users.updated_at AS users_updated_at 
+FROM users 
+WHERE users.email = %(email_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'email_1': 'ngereharry5@gmail.com', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)"}
+{"timestamp": "2025-08-14 12:24:14", "level": "INFO", "name": "app.services.auth", "message": "OTP created for user: ngereharry5@gmail.com, type: email"}
+{"timestamp": "2025-08-14 12:24:19", "level": "INFO", "name": "app.services.auth", "message": "OTP email sent successfully to ngereharry5@gmail.com for email"}

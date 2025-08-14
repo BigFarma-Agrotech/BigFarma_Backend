@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     
     # Email (for OTP)
     SMTP_HOST: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
+    SMTP_PORT: int = 465
     SMTP_USER: str = Field(default="", validation_alias="SMTP_USER")
     SMTP_PASSWORD: str = Field(default="", validation_alias="SMTP_PASSWORD")
     SMTP_PASSWORD: str = Field(default="", validation_alias="SMTP_PASSWORD")

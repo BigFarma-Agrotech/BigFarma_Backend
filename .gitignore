@@ -1,12 +1,11 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-./.env.template
+./.env
 .venv
 .env/
 venv/
 ENV/
-env.bak/
-venv.bak/
+.env
 
 

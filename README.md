@@ -143,10 +143,6 @@ Once the server is running, you can access:
 | POST | `/api/v1/auth/verify-otp` | Verify OTP code |
 | POST | `/api/v1/auth/forgot-password` | Request password reset OTP |
 | POST | `/api/v1/auth/reset-password` | Reset password using OTP |
-| GET | `/api/v1/auth/me` | Get current user info |
-| PUT | `/api/v1/auth/me` | Update current user |
-| POST | `/api/v1/auth/me/profile` | Create user profile |
-| PUT | `/api/v1/auth/me/profile` | Update user profile |
 | POST | `/api/v1/auth/change-password` | Change password |
 
 

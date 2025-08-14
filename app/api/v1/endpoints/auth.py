@@ -46,25 +46,11 @@ async def register(user_data: UserCreate) -> Any:
             id=user["id"],
             email=user.get("email"),
             phone=user.get("phone"),
-            user_category=user.get("user_category"),  # Will be None initially
-            is_active=user["is_active"],
-            is_verified=user["is_verified"],
-            is_superuser=user.get("is_superuser", False),
-            created_at=user["created_at"],
-            updated_at=user["updated_at"],
-            profile=ProfileResponse(**profile) if profile else None
-        )
-
-        token_response = TokenResponse(
-            access_token=access_token,
-            token_type="bearer",
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         )
 
         return {
             "message": "User registered successfully. Please complete your profile setup.",
             "user": user_response,
-            "token": token_response
         }
 
     except UserAlreadyExistsError as e:
@@ -130,9 +116,8 @@ async def login(user_data: UserLogin) -> Any:
 
 @router.post("/request-otp", response_model=OTPResponse)
 async def request_otp(otp_data: OTPRequest) -> Any:
-    """Request OTP for email/phone verification (only if user exists)."""
+    """Request OTP for email/phone verification"""
     try:
-        # Check if user exists first
         user_exists = await auth_service.check_user_exists(otp_data.email)
         if not user_exists:
             raise UserNotFoundError("User not found")
