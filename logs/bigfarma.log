@@ -847,3 +847,5 @@ WHERE users.email = %(email_1)s
 (Background on this error at: https://sqlalche.me/e/20/e3q8)"}
 {"timestamp": "2025-08-14 12:24:14", "level": "INFO", "name": "app.services.auth", "message": "OTP created for user: ngereharry5@gmail.com, type: email"}
 {"timestamp": "2025-08-14 12:24:19", "level": "INFO", "name": "app.services.auth", "message": "OTP email sent successfully to ngereharry5@gmail.com for email"}
+{"timestamp": "2025-08-15 01:20:50", "level": "INFO", "name": "app.main", "message": "Starting BigFarma Backend API"}
+{"timestamp": "2025-08-15 01:25:13", "level": "INFO", "name": "app.main", "message": "Shutting down BigFarma Backend API"}
