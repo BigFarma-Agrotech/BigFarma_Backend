@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     SMTP_PORT: Optional[int] = 587
     SMTP_USER: Optional[str] = None
     SMTP_PASSWORD: Optional[str] = None
-    SMTP_USE_TLS: bool = True
+    SMTP_USE_TLS: bool = False
     
     # SMS Configuration (Twilio example)
     TWILIO_ACCOUNT_SID: Optional[str] = None

@@ -19,8 +19,7 @@ async def register_user(user: UserCreate, db: Session = Depends(get_db)):
     try:
         db_user = auth_service.create_user(user)
         return {
-            "message": "User registered successfully. Please verify your account.",
-            "user_id": db_user.id
+            "message": "User registered successfully.",
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
