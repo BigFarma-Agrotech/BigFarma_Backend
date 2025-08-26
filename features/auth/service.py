@@ -19,6 +19,14 @@ class AuthService:
         """Get user by email or phone number."""
         return self.user_repo.get_by_login(identifier)
     
+    def get_user_by_email_or_phone(self, email: Optional[str] = None, phone: Optional[str] = None) -> Optional[User]:
+        """Get user by email or phone number."""
+        if email:
+            return self.user_repo.get_by_email(email)
+        elif phone:
+            return self.user_repo.get_by_phone(phone)
+        return None
+    
     def authenticate_user(self, login: str, password: str) -> Optional[User]:
         """Authenticate user with login and password."""
         return self.user_repo.authenticate(login, password)
@@ -34,10 +42,19 @@ class AuthService:
         self, 
         user_id: int, 
         medium: OTPMedium, 
-        destination: str, 
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
         otp_type: str = "verification"
     ) -> bool:
         """Request OTP code via specified medium."""
+        # Determine the destination based on medium
+        if medium == OTPMedium.EMAIL and email:
+            destination = email
+        elif medium == OTPMedium.PHONE and phone:
+            destination = phone
+        else:
+            raise ValueError("Invalid medium or missing contact information")
+        
         return await self.otp_service.request_otp(user_id, medium, destination, otp_type)
     
     def verify_otp(self, user_id: int, code: str, medium: OTPMedium) -> bool:

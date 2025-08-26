@@ -7,6 +7,7 @@ from features.auth.schemas import (
     OTPVerify, PasswordResetRequest, PasswordReset
 )
 from features.auth.service import AuthService
+from features.auth.models import OTPMedium
 from core.security import create_access_token, create_refresh_token
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -18,7 +19,8 @@ async def register_user(user: UserCreate, db: Session = Depends(get_db)):
     try:
         db_user = auth_service.create_user(user)
         return {
-            "message": "User registered successfully.",
+            "message": "User registered successfully. Please verify your account.",
+            "user_id": db_user.id
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -59,22 +61,37 @@ async def request_otp(
     auth_service = AuthService(db)
     
     # Find user by email or phone number
-    user = auth_service.get_user_by_identifier(otp_request.destination)
+    user = auth_service.get_user_by_email_or_phone(
+        email=otp_request.email,
+        phone=otp_request.phone
+    )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
+    # Verify the medium matches the provided contact method
+    if otp_request.medium == OTPMedium.EMAIL and not otp_request.email:
+        raise HTTPException(status_code=400, detail="Email is required for email OTP")
+    
+    if otp_request.medium == OTPMedium.PHONE and not otp_request.phone:
+        raise HTTPException(status_code=400, detail="Phone is required for phone OTP")
+    
     # Verify the medium matches the user's registered contact method
-    from features.auth.models import OTPMedium
-    if otp_request.medium == OTPMedium.EMAIL and user.email != otp_request.destination:
+    if (otp_request.medium == OTPMedium.EMAIL and 
+        otp_request.email and user.email != otp_request.email):
         raise HTTPException(status_code=400, detail="Email does not match user record")
     
-    if otp_request.medium == OTPMedium.PHONE and user.phone_number != otp_request.destination:
+    if (otp_request.medium == OTPMedium.PHONE and 
+        otp_request.phone and user.phone_number != otp_request.phone):
         raise HTTPException(status_code=400, detail="Phone number does not match user record")
     
     # Send OTP in background
     background_tasks.add_task(
         auth_service.request_otp,
-        user.id, otp_request.medium, otp_request.destination, otp_request.otp_type
+        user.id, 
+        otp_request.medium, 
+        otp_request.email,
+        otp_request.phone,
+        otp_request.otp_type
     )
     
     return {"message": "OTP sent successfully"}
@@ -84,9 +101,19 @@ async def verify_otp(otp_verify: OTPVerify, db: Session = Depends(get_db)):
     auth_service = AuthService(db)
     
     # Find user by email or phone number
-    user = auth_service.get_user_by_identifier(otp_verify.destination)
+    user = auth_service.get_user_by_email_or_phone(
+        email=otp_verify.email,
+        phone=otp_verify.phone
+    )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    
+    # Verify the medium matches the provided contact method
+    if otp_verify.medium == OTPMedium.EMAIL and not otp_verify.email:
+        raise HTTPException(status_code=400, detail="Email is required for email OTP verification")
+    
+    if otp_verify.medium == OTPMedium.PHONE and not otp_verify.phone:
+        raise HTTPException(status_code=400, detail="Phone is required for phone OTP verification")
     
     # Verify OTP
     is_valid = auth_service.verify_otp(user.id, otp_verify.code, otp_verify.medium)
@@ -109,34 +136,59 @@ async def password_reset_request(
 ):
     auth_service = AuthService(db)
     
-    user = auth_service.get_user_by_identifier(reset_request.destination)
+    user = auth_service.get_user_by_email_or_phone(
+        email=reset_request.email,
+        phone=reset_request.phone
+    )
     if not user:
         # Don't reveal whether user exists for security
         return {"message": "If the account exists, a password reset code has been sent"}
     
+    # Verify the medium matches the provided contact method
+    if reset_request.medium == OTPMedium.EMAIL and not reset_request.email:
+        raise HTTPException(status_code=400, detail="Email is required for email password reset")
+    
+    if reset_request.medium == OTPMedium.PHONE and not reset_request.phone:
+        raise HTTPException(status_code=400, detail="Phone is required for phone password reset")
+    
     # Verify the medium matches the user's registered contact method
-    from features.auth.models import OTPMedium
-    if reset_request.medium == OTPMedium.EMAIL and user.email != reset_request.destination:
+    if (reset_request.medium == OTPMedium.EMAIL and 
+        reset_request.email and user.email != reset_request.email):
         raise HTTPException(status_code=400, detail="Email does not match user record")
     
-    if reset_request.medium == OTPMedium.PHONE and user.phone_number != reset_request.destination:
+    if (reset_request.medium == OTPMedium.PHONE and 
+        reset_request.phone and user.phone_number != reset_request.phone):
         raise HTTPException(status_code=400, detail="Phone number does not match user record")
     
     # Send OTP in background
     background_tasks.add_task(
         auth_service.request_otp,
-        user.id, reset_request.medium, reset_request.destination, "password_reset"
+        user.id, 
+        reset_request.medium, 
+        reset_request.email,
+        reset_request.phone,
+        "password_reset"
     )
     
-    return {"message": "Password reset code has been sent"}
+    return {"message": "If the account exists, a password reset code has been sent"}
 
 @router.post("/password-reset")
 async def password_reset(reset_data: PasswordReset, db: Session = Depends(get_db)):
     auth_service = AuthService(db)
     
-    user = auth_service.get_user_by_identifier(reset_data.destination)
+    user = auth_service.get_user_by_email_or_phone(
+        email=reset_data.email,
+        phone=reset_data.phone
+    )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    
+    # Verify the medium matches the provided contact method
+    if reset_data.medium == OTPMedium.EMAIL and not reset_data.email:
+        raise HTTPException(status_code=400, detail="Email is required for email password reset")
+    
+    if reset_data.medium == OTPMedium.PHONE and not reset_data.phone:
+        raise HTTPException(status_code=400, detail="Phone is required for phone password reset")
     
     # Verify OTP
     is_valid = auth_service.verify_otp(user.id, reset_data.code, reset_data.medium)

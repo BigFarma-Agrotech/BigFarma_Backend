@@ -36,22 +36,82 @@ class Token(BaseModel):
     refresh_token: str
 
 class OTPRequest(BaseModel):
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
     medium: OTPMedium  # email or phone
-    destination: str  # email address or phone number
     otp_type: str = "verification"  # verification, password_reset, etc.
 
+    @validator('medium')
+    def validate_medium_based_on_fields(cls, v, values):
+        if v == OTPMedium.EMAIL and not values.get('email'):
+            raise ValueError('Email is required when medium is email')
+        if v == OTPMedium.PHONE and not values.get('phone'):
+            raise ValueError('Phone is required when medium is phone')
+        return v
+
+    @validator('email', 'phone')
+    def validate_at_least_one_contact_method(cls, v, values):
+        if not values.get('email') and not values.get('phone'):
+            raise ValueError('Either email or phone must be provided')
+        return v
+
 class OTPVerify(BaseModel):
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
     medium: OTPMedium
-    destination: str
     code: str
     otp_type: str = "verification"
 
+    @validator('medium')
+    def validate_medium_based_on_fields(cls, v, values):
+        if v == OTPMedium.EMAIL and not values.get('email'):
+            raise ValueError('Email is required when medium is email')
+        if v == OTPMedium.PHONE and not values.get('phone'):
+            raise ValueError('Phone is required when medium is phone')
+        return v
+
+    @validator('email', 'phone')
+    def validate_at_least_one_contact_method(cls, v, values):
+        if not values.get('email') and not values.get('phone'):
+            raise ValueError('Either email or phone must be provided')
+        return v
+
 class PasswordResetRequest(BaseModel):
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
     medium: OTPMedium
-    destination: str
+
+    @validator('medium')
+    def validate_medium_based_on_fields(cls, v, values):
+        if v == OTPMedium.EMAIL and not values.get('email'):
+            raise ValueError('Email is required when medium is email')
+        if v == OTPMedium.PHONE and not values.get('phone'):
+            raise ValueError('Phone is required when medium is phone')
+        return v
+
+    @validator('email', 'phone')
+    def validate_at_least_one_contact_method(cls, v, values):
+        if not values.get('email') and not values.get('phone'):
+            raise ValueError('Either email or phone must be provided')
+        return v
 
 class PasswordReset(BaseModel):
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
     medium: OTPMedium
-    destination: str
     code: str
     new_password: str
+
+    @validator('medium')
+    def validate_medium_based_on_fields(cls, v, values):
+        if v == OTPMedium.EMAIL and not values.get('email'):
+            raise ValueError('Email is required when medium is email')
+        if v == OTPMedium.PHONE and not values.get('phone'):
+            raise ValueError('Phone is required when medium is phone')
+        return v
+
+    @validator('email', 'phone')
+    def validate_at_least_one_contact_method(cls, v, values):
+        if not values.get('email') and not values.get('phone'):
+            raise ValueError('Either email or phone must be provided')
+        return v
