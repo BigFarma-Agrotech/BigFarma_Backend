@@ -40,3 +40,10 @@ flake8
 
 # Type checking
 mypy 
+
+passlib
+bcrypt
+
+aiosmtplib
+twilio
+email-validator
