@@ -37,6 +37,7 @@ class FarmerProfile(Base):
     # Contact Information fields removed - will use user table instead
     
     # Farm Information
+    farm_name = Column(String, nullable=False)
     farm_type = Column(Enum(FarmType), nullable=False)
     farm_image = Column(String, nullable=True)  # URL to stored farm image
     farm_location = Column(Text, nullable=False)  # Address or GPS coordinates

@@ -15,6 +15,7 @@ class FarmerProfileBase(BaseModel):
     phone: Optional[str] = None
     
     # Farm Information
+    farm_name: str = Field(..., min_length=2, max_length=150)
     farm_type: FarmType
     farm_image: Optional[str] = None
     farm_location: str = Field(..., min_length=5, max_length=500)
@@ -31,6 +32,7 @@ class FarmerProfileResponse(BaseModel):
     home_address: str
     profile_picture: Optional[str] = None
     id_document: str
+    farm_name: str
     farm_type: FarmType
     farm_image: Optional[str] = None
     farm_location: str
@@ -50,6 +52,7 @@ class FarmerProfileUpdate(BaseModel):
     profile_picture: Optional[str] = None
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
+    farm_name: Optional[str] = None
     farm_type: Optional[FarmType] = None
     farm_image: Optional[str] = None
     farm_location: Optional[str] = Field(None, min_length=5, max_length=500)
