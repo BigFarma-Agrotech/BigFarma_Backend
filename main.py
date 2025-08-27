@@ -1,14 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-from config import settings
 
 from database import Base, engine
 from features.auth.routes import router as auth_router
 from features.users.routes import router as users_router
-
+from config import settings
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Create tables
@@ -24,7 +23,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include feature routers
+# Include routers
 app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"])
 app.include_router(users_router, prefix="/api/v1", tags=["Users"])
 
@@ -38,4 +37,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

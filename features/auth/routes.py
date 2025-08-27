@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
+import logging
+import traceback
 
 from database import get_db
 from features.auth.schemas import (
@@ -10,6 +12,7 @@ from features.auth.service import AuthService
 from features.auth.models import OTPMedium
 from core.security import create_access_token, create_refresh_token
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register")
@@ -95,37 +98,58 @@ async def request_otp(
     
     return {"message": "OTP sent successfully"}
 
+
 @router.post("/verify-otp")
 async def verify_otp(otp_verify: OTPVerify, db: Session = Depends(get_db)):
-    auth_service = AuthService(db)
-    
-    # Find user by email or phone number
-    user = auth_service.get_user_by_email_or_phone(
-        email=otp_verify.email,
-        phone=otp_verify.phone
-    )
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Verify the medium matches the provided contact method
-    if otp_verify.medium == OTPMedium.EMAIL and not otp_verify.email:
-        raise HTTPException(status_code=400, detail="Email is required for email OTP verification")
-    
-    if otp_verify.medium == OTPMedium.PHONE and not otp_verify.phone:
-        raise HTTPException(status_code=400, detail="Phone is required for phone OTP verification")
-    
-    # Verify OTP
-    is_valid = auth_service.verify_otp(user.id, otp_verify.code, otp_verify.medium)
-    if not is_valid:
-        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
-    
-    # Mark user as verified if this is a verification OTP
-    if otp_verify.otp_type == "verification" and not user.is_verified:
-        from repositories import UserRepository
-        user_repo = UserRepository(db)
-        user_repo.update(user.id, is_verified=True)
-    
-    return {"message": "OTP verified successfully"}
+    try:
+        auth_service = AuthService(db)
+        
+        # Find user by email or phone number
+        user = auth_service.get_user_by_email_or_phone(
+            email=otp_verify.email,
+            phone=otp_verify.phone
+        )
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Verify the medium matches the provided contact method
+        if otp_verify.medium == OTPMedium.EMAIL and not otp_verify.email:
+            raise HTTPException(status_code=400, detail="Email is required for email OTP verification")
+        
+        if otp_verify.medium == OTPMedium.PHONE and not otp_verify.phone:
+            raise HTTPException(status_code=400, detail="Phone is required for phone OTP verification")
+        
+        # Verify the medium matches the user's registered contact method
+        if (otp_verify.medium == OTPMedium.EMAIL and 
+            otp_verify.email and user.email != otp_verify.email):
+            raise HTTPException(status_code=400, detail="Email does not match user record")
+        
+        if (otp_verify.medium == OTPMedium.PHONE and 
+            otp_verify.phone and user.phone_number != otp_verify.phone):
+            raise HTTPException(status_code=400, detail="Phone number does not match user record")
+        
+        # Verify OTP
+        is_valid = auth_service.verify_otp(user.id, otp_verify.code, otp_verify.medium)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+        
+        # Mark user as verified if this is a verification OTP
+        if otp_verify.otp_type == "verification" and not user.is_verified:
+            from repositories import UserRepository
+            user_repo = UserRepository(db)
+            user_repo.update(user.id, is_verified=True)
+            db.refresh(user)
+        
+        return {"message": "OTP verified successfully"}
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as they are
+        raise
+    except Exception as e:
+        logger.error(f"OTP verification error: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="Internal server error during OTP verification")
+
 
 @router.post("/password-reset-request")
 async def password_reset_request(

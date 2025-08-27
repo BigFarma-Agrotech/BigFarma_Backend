@@ -1,11 +1,14 @@
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 from typing import Optional, List
+import logging
 import re
 
 from features.auth.models import User
 from features.auth.schemas import UserCreate
 from repositories.base_repository import BaseRepository
+
+logger = logging.getLogger(__name__)
 
 class UserRepository(BaseRepository[User, UserCreate, UserCreate]):
     def __init__(self, db: Session):
