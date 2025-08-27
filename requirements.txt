@@ -42,7 +42,7 @@ flake8
 mypy 
 
 passlib
-bcrypt
+bcrypt==3.2.2
 
 aiosmtplib
 twilio
