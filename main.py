@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+from config import settings
 
 from database import Base, engine
 from features.auth.routes import router as auth_router
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 # Create tables
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="BigFarma API", version="1.0.0")
+app = app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG)
 
 app.add_middleware(
     CORSMiddleware,
