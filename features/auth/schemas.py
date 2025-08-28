@@ -1,5 +1,5 @@
-from pydantic import BaseModel, EmailStr, field_validator, FieldValidationInfo
-from typing import Optional
+from pydantic import BaseModel, EmailStr, validator, constr, field_validator, FieldValidationInfo
+from typing import Optional, Union
 from datetime import datetime
 from features.auth.models import UserCategory, OTPMedium
 
@@ -19,7 +19,7 @@ class UserCreate(UserBase):
     password: str
 
 class UserLogin(BaseModel):
-    login: str
+    login: str  # Can be email or phone number
     password: str
 
 class UserResponse(UserBase):
@@ -39,16 +39,29 @@ class Token(BaseModel):
 class OTPRequest(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
-    medium: OTPMedium
-    otp_type: str = "verification"
+    medium: OTPMedium  # email or phone
+    otp_type: str = "verification"  # verification, password_reset, etc.
+
+    @field_validator('email', 'phone', mode='before')
+    @classmethod
+    def validate_contact_methods(cls, v, info: FieldValidationInfo):
+        # Check if we have at least one contact method
+        email = info.data.get('email') if info.field_name != 'email' else v
+        phone = info.data.get('phone') if info.field_name != 'phone' else v
+        
+        if email is None and phone is None:
+            raise ValueError('Either email or phone must be provided')
+        return v
 
     @field_validator('medium')
     @classmethod
-    def validate_medium(cls, v, info: FieldValidationInfo):
-        if v == OTPMedium.EMAIL and not info.data.get('email'):
-            raise ValueError('Email is required when medium is email')
-        if v == OTPMedium.PHONE and not info.data.get('phone'):
-            raise ValueError('Phone is required when medium is phone')
+    def validate_medium_based_on_fields(cls, v, info: FieldValidationInfo):
+        if v == OTPMedium.EMAIL:
+            if not info.data.get('email'):
+                raise ValueError('Email is required when medium is email')
+        elif v == OTPMedium.PHONE:
+            if not info.data.get('phone'):
+                raise ValueError('Phone is required when medium is phone')
         return v
 
 class OTPVerify(BaseModel):
@@ -58,13 +71,26 @@ class OTPVerify(BaseModel):
     code: str
     otp_type: str = "verification"
 
+    @field_validator('email', 'phone', mode='before')
+    @classmethod
+    def validate_contact_methods(cls, v, info: FieldValidationInfo):
+        # Check if we have at least one contact method
+        email = info.data.get('email') if info.field_name != 'email' else v
+        phone = info.data.get('phone') if info.field_name != 'phone' else v
+        
+        if email is None and phone is None:
+            raise ValueError('Either email or phone must be provided')
+        return v
+
     @field_validator('medium')
     @classmethod
-    def validate_medium(cls, v, info: FieldValidationInfo):
-        if v == OTPMedium.EMAIL and not info.data.get('email'):
-            raise ValueError('Email is required when medium is email')
-        if v == OTPMedium.PHONE and not info.data.get('phone'):
-            raise ValueError('Phone is required when medium is phone')
+    def validate_medium_based_on_fields(cls, v, info: FieldValidationInfo):
+        if v == OTPMedium.EMAIL:
+            if not info.data.get('email'):
+                raise ValueError('Email is required when medium is email')
+        elif v == OTPMedium.PHONE:
+            if not info.data.get('phone'):
+                raise ValueError('Phone is required when medium is phone')
         return v
 
 class PasswordResetRequest(BaseModel):
@@ -72,13 +98,26 @@ class PasswordResetRequest(BaseModel):
     phone: Optional[str] = None
     medium: OTPMedium
 
+    @field_validator('email', 'phone', mode='before')
+    @classmethod
+    def validate_contact_methods(cls, v, info: FieldValidationInfo):
+        # Check if we have at least one contact method
+        email = info.data.get('email') if info.field_name != 'email' else v
+        phone = info.data.get('phone') if info.field_name != 'phone' else v
+        
+        if email is None and phone is None:
+            raise ValueError('Either email or phone must be provided')
+        return v
+
     @field_validator('medium')
     @classmethod
-    def validate_medium(cls, v, info: FieldValidationInfo):
-        if v == OTPMedium.EMAIL and not info.data.get('email'):
-            raise ValueError('Email is required when medium is email')
-        if v == OTPMedium.PHONE and not info.data.get('phone'):
-            raise ValueError('Phone is required when medium is phone')
+    def validate_medium_based_on_fields(cls, v, info: FieldValidationInfo):
+        if v == OTPMedium.EMAIL:
+            if not info.data.get('email'):
+                raise ValueError('Email is required when medium is email')
+        elif v == OTPMedium.PHONE:
+            if not info.data.get('phone'):
+                raise ValueError('Phone is required when medium is phone')
         return v
 
 class PasswordReset(BaseModel):
@@ -88,11 +127,24 @@ class PasswordReset(BaseModel):
     code: str
     new_password: str
 
+    @field_validator('email', 'phone', mode='before')
+    @classmethod
+    def validate_contact_methods(cls, v, info: FieldValidationInfo):
+        # Check if we have at least one contact method
+        email = info.data.get('email') if info.field_name != 'email' else v
+        phone = info.data.get('phone') if info.field_name != 'phone' else v
+        
+        if email is None and phone is None:
+            raise ValueError('Either email or phone must be provided')
+        return v
+
     @field_validator('medium')
     @classmethod
-    def validate_medium(cls, v, info: FieldValidationInfo):
-        if v == OTPMedium.EMAIL and not info.data.get('email'):
-            raise ValueError('Email is required when medium is email')
-        if v == OTPMedium.PHONE and not info.data.get('phone'):
-            raise ValueError('Phone is required when medium is phone')
+    def validate_medium_based_on_fields(cls, v, info: FieldValidationInfo):
+        if v == OTPMedium.EMAIL:
+            if not info.data.get('email'):
+                raise ValueError('Email is required when medium is email')
+        elif v == OTPMedium.PHONE:
+            if not info.data.get('phone'):
+                raise ValueError('Phone is required when medium is phone')
         return v

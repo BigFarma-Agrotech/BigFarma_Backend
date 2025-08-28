@@ -6,6 +6,7 @@ from features.auth.schemas import UserCreate, UserLogin, Token, OTPRequest, OTPV
 from features.auth.service import AuthService
 from features.auth.models import OTPMedium
 from core.security import create_access_token, create_refresh_token
+from repositories.user_repository import UserRepository
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 

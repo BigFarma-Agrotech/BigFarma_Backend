@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-
+from datetime import datetime
 from database import Base, engine
 from features.auth.routes import router as auth_router
 from features.users.routes import router as users_router
@@ -30,6 +30,14 @@ app.include_router(users_router, prefix="/api/v1", tags=["Users"])
 @app.get("/")
 async def root():
     return {"message": "BigFarma API", "version": "1.0.0"}
+
+@app.get("/debug/time")
+async def debug_time():
+    return {
+        "server_time": datetime.now(),
+        "utc_time": datetime.utcnow(),
+        "database_url": settings.DATABASE_URL
+    }
 
 @app.get("/health")
 async def health_check():
