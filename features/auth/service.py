@@ -57,6 +57,12 @@ class AuthService:
         
         return await self.otp_service.request_otp(user_id, medium, destination, otp_type)
     
+    # verify account
     def verify_otp(self, user_id: int, code: str, medium: OTPMedium) -> bool:
         """Verify OTP code."""
         return self.otp_service.verify_otp(user_id, code, medium)
+    
+    # check if otp has been verified (password reset)
+    def password_verify_otp(self, user_id: int, medium: OTPMedium) -> bool:
+        """Check used status"""
+        return self.otp_service.password_verify_otp(user_id, medium)

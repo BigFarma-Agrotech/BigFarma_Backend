@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, DateTime, Enum, ForeignKey
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, Enum, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -11,6 +11,10 @@ class UserCategory(str, enum.Enum):
 class OTPMedium(str, enum.Enum):
     EMAIL = "email"
     PHONE = "phone"
+
+class OTPType(str, enum.Enum):
+    VERIFICATION = "verification"
+    PASSWORD_RESET = "password_reset"
 
 class User(Base):
     __tablename__ = "users"
@@ -36,9 +40,10 @@ class OTPCode(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     code = Column(String, nullable=False)
-    medium = Column(Enum(OTPMedium), nullable=False)  # email or phone
+    medium = Column(Enum(OTPMedium), nullable=False)
+    otp_type = Column(Enum(OTPType), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
-    is_used = Column(Boolean, default=False)
+    is_verified = Column(Boolean, default=False)  # Track if OTP has been verified
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     user = relationship("User", back_populates="otp_codes")

@@ -215,7 +215,7 @@ async def password_reset(reset_data: PasswordReset, db: Session = Depends(get_db
         raise HTTPException(status_code=400, detail="Phone is required for phone password reset")
     
     # Verify OTP
-    is_valid = auth_service.verify_otp(user.id, reset_data.code, reset_data.medium)
+    is_valid = auth_service.password_verify_otp(user.id, reset_data.medium)
     if not is_valid:
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
     
