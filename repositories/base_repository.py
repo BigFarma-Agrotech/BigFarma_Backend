@@ -1,4 +1,4 @@
-from typing import Generic, TypeVar, Type, Optional, List
+from typing import Generic, TypeVar, Type, Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -24,11 +24,12 @@ class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         self.db.refresh(db_obj)
         return db_obj
 
-    def update(self, id: int, obj_in: UpdateSchemaType) -> Optional[ModelType]:
+    def update(self, id: int, **kwargs) -> Optional[ModelType]:
         db_obj = self.get(id)
         if db_obj:
-            for key, value in obj_in.dict(exclude_unset=True).items():
-                setattr(db_obj, key, value)
+            for key, value in kwargs.items():
+                if hasattr(db_obj, key):
+                    setattr(db_obj, key, value)
             self.db.commit()
             self.db.refresh(db_obj)
         return db_obj

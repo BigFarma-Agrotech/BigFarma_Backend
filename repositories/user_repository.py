@@ -1,8 +1,8 @@
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
-from typing import Optional, List
-import logging
+from typing import Optional, List, Dict, Any
 import re
+import logging
 
 from features.auth.models import User
 from features.auth.schemas import UserCreate
@@ -27,7 +27,6 @@ class UserRepository(BaseRepository[User, UserCreate, UserCreate]):
             return self.get_by_phone(login)
 
     def get_with_profile(self, user_id: int) -> Optional[User]:
-        """Get user with profile information eagerly loaded."""
         return self.db.query(User).options(
             joinedload(User.farmer_profile),
             joinedload(User.consumer_profile)
@@ -50,26 +49,15 @@ class UserRepository(BaseRepository[User, UserCreate, UserCreate]):
             self.db.rollback()
             raise ValueError("User with this email or phone number already exists")
 
-    def update_contact_info(self, user_id: int, email: Optional[str] = None, phone: Optional[str] = None) -> Optional[User]:
-        """Update user contact information."""
-        user = self.get(user_id)
-        if not user:
-            return None
-        
-        update_data = {}
-        if email is not None and not user.email:
-            update_data['email'] = email
-        
-        if phone is not None and not user.phone_number:
-            update_data['phone_number'] = phone
-        
-        if update_data:
-            for key, value in update_data.items():
-                setattr(user, key, value)
+    def update(self, id: int, **kwargs) -> Optional[User]:
+        db_user = self.get(id)
+        if db_user:
+            for key, value in kwargs.items():
+                if hasattr(db_user, key):
+                    setattr(db_user, key, value)
             self.db.commit()
-            self.db.refresh(user)
-        
-        return user
+            self.db.refresh(db_user)
+        return db_user
 
     def authenticate(self, login: str, password: str) -> Optional[User]:
         from core.security import verify_password
