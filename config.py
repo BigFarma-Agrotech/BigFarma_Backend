@@ -4,6 +4,10 @@ from functools import lru_cache
 from pydantic import Field, field_validator
 
 class Settings(BaseSettings):
+    
+    # Template settings
+    TEMPLATES_DIR: str = "templates"
+    
     # Database
     DATABASE_URL: str = "sqlite:///./bigfarma.db"
     
