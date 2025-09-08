@@ -1,5 +1,6 @@
 
-
+{% extends "base.html" %}
+{% block content %}
     <center class="w-full" style="background-color:#f3faf6;">
         <!-- Outer padding similar to screenshot top pale band -->
         <table role="presentation" aria-hidden="true" class="w-full" style="background-color:#e9f2ee;">
@@ -33,7 +34,7 @@
                         </div>
 
                         <div class="px-10 mt-6">
-                            <p class="font-semibold text-gray-900">Hi John Doe,</p>
+                            <p class="font-semibold text-gray-900">Hi {{ user.fullname }},</p>
 
                             <p class="mt-4 text-gray-700 leading-relaxed">
                                 You recently requested to verify your account. <br> Please use the One-Time Password
@@ -47,12 +48,12 @@
                                 <a href="#"
                                     class="btn-rounded text-3xl inline-block bg-[#145a2b] hover:bg-[#124f26] text-white tracking-widest py-5 px-8 text-center font-medium shadow-sm"
                                     style="border-radius:8px; text-decoration:none; display:inline-block; ">
-                                    123456
+                                    {{ otp_code }}
                                 </a>
                             </div>
 
                             <p class="mt-6 text-gray-700 leading-relaxed">
-                                This code is valid for the next 10 minutes. <br>
+                                This code is valid for the next {{ expire_time }} minutes. <br>
                                 For your security, do not share this code with anyone.
                             </p>
 
@@ -112,3 +113,4 @@
             </tr>
         </table>
     </center>
+{% endblock %}
