@@ -49,6 +49,7 @@ async def login(user_login: UserLogin, db: Session = Depends(get_db)):
     refresh_token = create_refresh_token(data={"sub": str(user.id)})
     
     return {
+        "user_category": user.category,
         "access_token": access_token, 
         "token_type": "bearer",
         "refresh_token": refresh_token

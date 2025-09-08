@@ -35,6 +35,7 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     refresh_token: str
+    user_category: str
 
 class OTPRequest(BaseModel):
     email: Optional[EmailStr] = None
