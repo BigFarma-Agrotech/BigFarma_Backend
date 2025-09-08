@@ -6,7 +6,7 @@ from pydantic import Field, field_validator
 class Settings(BaseSettings):
     
     # Template settings
-    TEMPLATES_DIR: str = "templates"
+    TEMPLATES_DIR: str = "templates/emails"
     
     # Database
     DATABASE_URL: str = "sqlite:///./bigfarma.db"
