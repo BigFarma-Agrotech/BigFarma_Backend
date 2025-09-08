@@ -3,7 +3,7 @@ from typing import Optional
 
 from features.auth.models import User, OTPMedium
 from features.auth.schemas import UserCreate
-from repositories.user_repository import UserRepository
+from repositories import UserRepository
 from services.otp_service import OTPService
 
 logger = logging.getLogger(__name__)

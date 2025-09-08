@@ -7,8 +7,6 @@ from features.auth.models import OTPCode, OTPMedium, OTPType
 from config import settings
 from repositories.base_repository import BaseRepository
 
-logger = logging.getLogger(__name__)
-
 class OTPRepository(BaseRepository[OTPCode, None, None]):
     def __init__(self, db: Session):
         super().__init__(OTPCode, db)

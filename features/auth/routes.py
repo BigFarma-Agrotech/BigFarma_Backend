@@ -6,6 +6,7 @@ from features.auth.schemas import UserCreate, UserLogin, Token, OTPRequest, OTPV
 from features.auth.service import AuthService
 from features.auth.models import OTPMedium, OTPType
 from core.security import create_access_token, create_refresh_token
+from repositories.user_repository import UserRepository
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -100,7 +101,6 @@ async def verify_otp(otp_verify: OTPVerify, db: Session = Depends(get_db)):
 @router.post("/password-reset")
 async def password_reset(reset_data: PasswordReset, db: Session = Depends(get_db)):
     auth_service = AuthService(db)
-    
     user = auth_service.get_user_by_email_or_phone(
         email=reset_data.email,
         phone=reset_data.phone

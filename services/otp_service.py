@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from features.auth.models import OTPMedium
 from utils.helpers import generate_otp_code
-from repositories.otp_repository import OTPRepository
+from repositories import OTPRepository
 from services.email_service import EmailService
 from services.sms_service import SMSService
 
