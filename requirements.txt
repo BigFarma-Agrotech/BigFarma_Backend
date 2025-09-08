@@ -47,3 +47,5 @@ bcrypt==3.2.2
 aiosmtplib
 twilio
 email-validator
+
+jinja2
