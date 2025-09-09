@@ -33,6 +33,11 @@ class User(Base):
     otp_codes = relationship("OTPCode", back_populates="user", cascade="all, delete-orphan")
     farmer_profile = relationship("FarmerProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
     consumer_profile = relationship("ConsumerProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    
+    # marketplace relationships
+    products = relationship("Product", back_populates="farmer", cascade="all, delete-orphan")
+    orders = relationship("Order", back_populates="consumer", cascade="all, delete-orphan")
+    reviews = relationship("Review", back_populates="consumer", cascade="all, delete-orphan")
 
 class OTPCode(Base):
     __tablename__ = "otp_codes"
