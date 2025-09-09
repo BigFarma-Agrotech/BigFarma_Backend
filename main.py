@@ -5,7 +5,10 @@ from datetime import datetime
 from database import Base, engine
 from features.auth.routes import router as auth_router
 from features.users.routes import router as users_router
+from features.marketplace.routes import router as marketplace_router
 from config import settings
+
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -26,6 +29,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"])
 app.include_router(users_router, prefix="/api/v1", tags=["Users"])
+app.include_router(marketplace_router, prefix="/api/v1", tags=["Marketplace"])
 
 @app.get("/")
 async def root():
