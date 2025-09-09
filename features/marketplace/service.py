@@ -1,0 +1,155 @@
+import logging
+from typing import List, Optional
+from sqlalchemy.orm import Session
+
+from features.marketplace.models import Product, Order, Review, AvailabilityStatus, OrderStatus
+from features.marketplace.schemas import ProductCreate, ProductUpdate, OrderCreate, ReviewCreate
+from features.users.models import FarmerProfile
+
+logger = logging.getLogger(__name__)
+
+class MarketplaceService:
+    def __init__(self, db: Session):
+        self.db = db
+
+    # Product methods
+    def create_product(self, farmer_id: int, product_data: ProductCreate) -> Product:
+        # Get farmer profile to get farm name
+        farmer_profile = self.db.query(FarmerProfile).filter(FarmerProfile.user_id == farmer_id).first()
+        if not farmer_profile:
+            raise ValueError("Farmer profile not found")
+        
+        images_str = ",".join(product_data.images)
+        
+        product = Product(
+            farmer_id=farmer_id,
+            name=product_data.name,
+            category=product_data.category,
+            description=product_data.description,
+            quantity=product_data.quantity,
+            price=product_data.price,
+            discount_percentage=product_data.discount_percentage,
+            location=farmer_profile.farm_location,  # Use farm location from profile
+            images=images_str
+        )
+        
+        self.db.add(product)
+        self.db.commit()
+        self.db.refresh(product)
+        return product
+
+    def update_product(self, product_id: int, farmer_id: int, update_data: ProductUpdate) -> Optional[Product]:
+        product = self.db.query(Product).filter(Product.id == product_id, Product.farmer_id == farmer_id).first()
+        if not product:
+            return None
+        
+        update_dict = update_data.dict(exclude_unset=True)
+        if 'images' in update_dict:
+            update_dict['images'] = ",".join(update_dict['images'])
+        
+        for key, value in update_dict.items():
+            setattr(product, key, value)
+        
+        self.db.commit()
+        self.db.refresh(product)
+        return product
+
+    def get_farmer_products(self, farmer_id: int) -> List[Product]:
+        return self.db.query(Product).filter(Product.farmer_id == farmer_id).all()
+
+    def get_product(self, product_id: int) -> Optional[Product]:
+        return self.db.query(Product).filter(Product.id == product_id).first()
+
+    def get_all_products(self, skip: int = 0, limit: int = 100) -> List[Product]:
+        return self.db.query(Product).filter(
+            Product.is_approved == True, 
+            Product.is_listed == True,
+            Product.availability == AvailabilityStatus.IN_STOCK
+        ).offset(skip).limit(limit).all()
+
+    def delete_product(self, product_id: int, farmer_id: int) -> bool:
+        product = self.db.query(Product).filter(Product.id == product_id, Product.farmer_id == farmer_id).first()
+        if product:
+            self.db.delete(product)
+            self.db.commit()
+            return True
+        return False
+
+    def add_discount(self, product_id: int, farmer_id: int, discount_percentage: float) -> Optional[Product]:
+        product = self.db.query(Product).filter(Product.id == product_id, Product.farmer_id == farmer_id).first()
+        if product:
+            product.discount_percentage = discount_percentage
+            self.db.commit()
+            self.db.refresh(product)
+            return product
+        return None
+
+    def remove_discount(self, product_id: int, farmer_id: int) -> Optional[Product]:
+        return self.add_discount(product_id, farmer_id, 0.0)
+
+    # Order methods
+    def create_order(self, consumer_id: int, order_data: OrderCreate) -> Optional[Order]:
+        product = self.get_product(order_data.product_id)
+        if not product or product.availability != AvailabilityStatus.IN_STOCK:
+            return None
+        
+        # Calculate total price with discount
+        discounted_price = product.price * (1 - product.discount_percentage / 100)
+        total_price = discounted_price  # This would need proper calculation based on quantity
+        
+        order = Order(
+            product_id=order_data.product_id,
+            consumer_id=consumer_id,
+            quantity_ordered=order_data.quantity_ordered,
+            total_price=total_price,
+            delivery_address=order_data.delivery_address
+        )
+        
+        # Update product quantity (this would need proper quantity parsing)
+        # For simplicity, we'll just mark as out of stock if this is the first order
+        product.availability = AvailabilityStatus.OUT_OF_STOCK
+        
+        self.db.add(order)
+        self.db.commit()
+        self.db.refresh(order)
+        return order
+
+    def get_user_orders(self, user_id: int) -> List[Order]:
+        return self.db.query(Order).filter(Order.consumer_id == user_id).order_by(Order.created_at.desc()).all()
+
+    def update_order_status(self, order_id: int, status: OrderStatus) -> Optional[Order]:
+        order = self.db.query(Order).filter(Order.id == order_id).first()
+        if order:
+            order.status = status
+            self.db.commit()
+            self.db.refresh(order)
+            return order
+        return None
+
+    # Review methods
+    def create_review(self, consumer_id: int, review_data: ReviewCreate) -> Optional[Review]:
+        product = self.get_product(review_data.product_id)
+        if not product:
+            return None
+        
+        review = Review(
+            product_id=review_data.product_id,
+            consumer_id=consumer_id,
+            rating=review_data.rating,
+            comment=review_data.comment
+        )
+        
+        # Update product ratings
+        product.total_ratings += 1
+        product.average_rating = (
+            (product.average_rating * (product.total_ratings - 1) + review_data.rating) 
+            / product.total_ratings
+        )
+        
+        self.db.add(review)
+        self.db.commit()
+        self.db.refresh(review)
+        return review
+
+    def get_product_reviews(self, product_id: int) -> List[Review]:
+        return self.db.query(Review).filter(Review.product_id == product_id).order_by(Review.created_at.desc()).all()
