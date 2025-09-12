@@ -160,6 +160,10 @@ class BigFarmaOrdersAPITester:
                 }
             )
             
+            print(f"Debug: Response status code: {response.status_code}")
+            print(f"Debug: Response headers: {dict(response.headers)}")
+            print(f"Debug: Raw response: {response.text[:500]}...")
+            
             if response.status_code == 200:
                 issue = response.json()
                 print(f"✅ Issue reported successfully for order {order_id}")
@@ -167,8 +171,16 @@ class BigFarmaOrdersAPITester:
                 print(f"   Status: {issue['status']}")
                 return issue
             else:
-                print(f"❌ Failed to report issue: {response.json()}")
+                try:
+                    error_detail = response.json()
+                    print(f"❌ Failed to report issue (HTTP {response.status_code}): {error_detail}")
+                except:
+                    print(f"❌ Failed to report issue (HTTP {response.status_code}): {response.text}")
                 return None
+        except requests.exceptions.JSONDecodeError as e:
+            print(f"❌ JSON decode error: {e}")
+            print(f"Response text: {response.text}")
+            return None
         except Exception as e:
             print(f"❌ Error reporting issue: {e}")
             return None
