@@ -38,7 +38,7 @@ class BigFarmaOrdersAPITester:
                 f"{self.base_url}/api/v1/auth/login",
                 headers=self.headers,
                 json={
-                    "email": email,
+                    "login": email,
                     "password": password
                 },
                 timeout=10
