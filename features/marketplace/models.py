@@ -18,6 +18,8 @@ class OrderStatus(str, enum.Enum):
     SHIPPING = "shipping"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    DELIVERY_ISSUE = "delivery_issue"
 
 class Product(Base):
     __tablename__ = "products"
@@ -62,7 +64,13 @@ class Order(Base):
     quantity_ordered = Column(String, nullable=False)
     total_price = Column(Float, nullable=False)
     delivery_address = Column(String, nullable=False)
+    contact_phone = Column(String, nullable=True)
+    delivery_notes = Column(Text, nullable=True)
     status = Column(Enum(OrderStatus), default=OrderStatus.PENDING)
+    
+    # Enhanced order tracking
+    order_number = Column(String, unique=True, nullable=True)  # Generated order number
+    estimated_delivery_date = Column(DateTime(timezone=True), nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

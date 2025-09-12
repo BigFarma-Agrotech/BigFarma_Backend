@@ -6,6 +6,7 @@ from database import Base, engine
 from features.auth.routes import router as auth_router
 from features.users.routes import router as users_router
 from features.marketplace.routes import router as marketplace_router
+from features.orders.routes import router as orders_router
 from config import settings
 
 
@@ -30,6 +31,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"])
 app.include_router(users_router, prefix="/api/v1", tags=["Users"])
 app.include_router(marketplace_router, prefix="/api/v1", tags=["Marketplace"])
+app.include_router(orders_router, prefix="/api/v1", tags=["Orders"])
 
 @app.get("/")
 async def root():
