@@ -56,6 +56,8 @@ class UserService:
         # Create new profile
         farmer_profile = FarmerProfile(**profile_dict, user_id=user_id)
         self.db.add(farmer_profile)
+        
+        user.profile_setup = True
         self.db.commit()
         self.db.refresh(farmer_profile)
         
@@ -125,7 +127,6 @@ class UserService:
         # If user doesn't have phone but profile provides it, update user
         if not user.phone_number and profile_dict.get('phone'):
             update_user_data['phone_number'] = profile_dict['phone']
-            # Remove from profile data since we'll store it in user table
             del profile_dict['phone']
         
         # Update user record if needed
@@ -141,6 +142,8 @@ class UserService:
         # Create new profile
         consumer_profile = ConsumerProfile(**profile_dict, user_id=user_id)
         self.db.add(consumer_profile)
+        
+        user.profile_setup = True
         self.db.commit()
         self.db.refresh(consumer_profile)
         
