@@ -36,7 +36,7 @@ class Token(BaseModel):
     token_type: str
     refresh_token: str
     user_category: str
-    profile_setup: str
+    profile_setup: bool
 
 class OTPRequest(BaseModel):
     email: Optional[EmailStr] = None
