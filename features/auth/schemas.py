@@ -7,6 +7,7 @@ class UserBase(BaseModel):
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
     category: UserCategory
+    profile_setup = False
 
     @field_validator('phone_number')
     @classmethod
