@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from database import get_db
 from features.marketplace.schemas import (
@@ -15,11 +15,51 @@ from core.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/marketplace", tags=["Marketplace"])
 
+# Categories endpoint
+@router.get("/categories")
+async def get_product_categories():
+    """Get available product categories for filtering"""
+    return {
+        "categories": [
+            {"id": "vegetables", "name": "Vegetables", "icon": "🥬", "parent": "crop"},
+            {"id": "fruits", "name": "Fruits", "icon": "🍎", "parent": "crop"},
+            {"id": "grains", "name": "Grains", "icon": "🌾", "parent": "crop"},
+            {"id": "proteins", "name": "Proteins", "icon": "🥚", "parent": "livestock"}
+        ]
+    }
+
 # Public endpoints
 @router.get("/products", response_model=List[ProductPublicResponse])
-async def get_all_products(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+async def get_all_products(
+    skip: int = 0, 
+    limit: int = 100,
+    category: Optional[str] = Query(None, description="Filter by category (vegetables, fruits, grains, proteins)"),
+    search: Optional[str] = Query(None, description="Search product names"),
+    min_price: Optional[float] = Query(None, description="Minimum price"),
+    max_price: Optional[float] = Query(None, description="Maximum price"),
+    db: Session = Depends(get_db)
+):
     service = MarketplaceService(db)
-    products = service.get_all_products(skip, limit)
+    
+    # Map UI categories to database categories
+    db_category = None
+    if category:
+        category_mapping = {
+            "vegetables": "crop",
+            "fruits": "crop",
+            "grains": "crop",
+            "proteins": "livestock"
+        }
+        db_category = category_mapping.get(category.lower())
+    
+    products = service.get_all_products(
+        skip=skip, 
+        limit=limit,
+        category=db_category,
+        search=search,
+        min_price=min_price,
+        max_price=max_price
+    )
     
     # Convert to simplified public response
     public_products = []

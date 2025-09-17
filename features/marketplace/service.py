@@ -60,12 +60,35 @@ class MarketplaceService:
     def get_product(self, product_id: int) -> Optional[Product]:
         return self.db.query(Product).filter(Product.id == product_id).first()
 
-    def get_all_products(self, skip: int = 0, limit: int = 100) -> List[Product]:
-        return self.db.query(Product).filter(
+    def get_all_products(
+        self, 
+        skip: int = 0, 
+        limit: int = 100,
+        category: Optional[str] = None,
+        search: Optional[str] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None
+    ) -> List[Product]:
+        query = self.db.query(Product).filter(
             Product.is_approved == True, 
             Product.is_listed == True,
             Product.availability == AvailabilityStatus.IN_STOCK
-        ).offset(skip).limit(limit).all()
+        )
+        
+        # Add filters
+        if category:
+            query = query.filter(Product.category == category)
+        
+        if search:
+            query = query.filter(Product.name.ilike(f"%{search}%"))
+        
+        if min_price is not None:
+            query = query.filter(Product.price >= min_price)
+            
+        if max_price is not None:
+            query = query.filter(Product.price <= max_price)
+        
+        return query.offset(skip).limit(limit).all()
 
     def delete_product(self, product_id: int, farmer_id: int) -> bool:
         product = self.db.query(Product).filter(Product.id == product_id, Product.farmer_id == farmer_id).first()
