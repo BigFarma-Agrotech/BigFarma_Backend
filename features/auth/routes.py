@@ -35,7 +35,8 @@ async def login(user_login: UserLogin, db: Session = Depends(get_db)):
         "access_token": access_token, 
         "token_type": "bearer",
         "refresh_token": refresh_token,
-        "user_category": user.category.value
+        "user_category": user.category.value,
+        "profile_setup": user.profile_setup
     }
 
 @router.post("/request-otp")

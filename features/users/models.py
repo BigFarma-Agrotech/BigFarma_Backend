@@ -34,7 +34,6 @@ class FarmerProfile(Base):
     profile_picture = Column(String, nullable=True)  # URL to stored image
     id_document = Column(String, nullable=False)  # URL to stored ID document
     
-    # Contact Information fields removed - will use user table instead
     
     # Farm Information
     farm_name = Column(String, nullable=False)

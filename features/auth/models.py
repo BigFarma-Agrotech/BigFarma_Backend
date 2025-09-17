@@ -24,6 +24,7 @@ class User(Base):
     phone_number = Column(String, unique=True, index=True, nullable=True)
     password = Column(String)
     category = Column(Enum(UserCategory))
+    profile_setup = Column(Boolean, default=False)
     is_verified = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

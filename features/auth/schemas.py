@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, field_validator, FieldValidationInfo
+from pydantic import BaseModel, EmailStr, field_validator, FieldValidationInfo, Field
 from typing import Optional
 from datetime import datetime
 from features.auth.models import UserCategory, OTPMedium
@@ -36,6 +36,7 @@ class Token(BaseModel):
     token_type: str
     refresh_token: str
     user_category: str
+    profile_setup: bool
 
 class OTPRequest(BaseModel):
     email: Optional[EmailStr] = None
