@@ -20,6 +20,29 @@ class MarketplaceService:
         if not farmer_profile:
             raise ValueError("Farmer profile not found")
         
+        # Check for duplicate product
+        existing_product = self.db.query(Product).filter(
+            Product.farmer_id == farmer_id,
+            Product.name.ilike(product_data.name),
+            Product.is_listed == True
+        ).first()
+        
+        if existing_product:
+            raise ValueError(f"Product '{product_data.name}' already exists. Please edit the existing listing.")
+        
+        # Validate product data
+        if not product_data.description or len(product_data.description) < 20:
+            raise ValueError("Product description must be at least 20 characters long")
+        
+        if not product_data.images or len(product_data.images) == 0:
+            raise ValueError("At least one product image is required")
+        
+        if product_data.price <= 0:
+            raise ValueError("Product price must be greater than 0")
+        
+        if product_data.quantity_available <= 0:
+            raise ValueError("Quantity must be greater than 0")
+        
         images_str = ",".join(product_data.images)
         
         product = Product(
@@ -28,10 +51,13 @@ class MarketplaceService:
             category=product_data.category,
             description=product_data.description,
             quantity=product_data.quantity,
+            quantity_available=product_data.quantity_available,
             price=product_data.price,
             discount_percentage=product_data.discount_percentage,
             location=farmer_profile.farm_location,  # Use farm location from profile
-            images=images_str
+            images=images_str,
+            status=ProductStatus.PENDING,  # Start as pending for admin approval
+            is_approved=False  # Needs admin approval
         )
         
         self.db.add(product)
