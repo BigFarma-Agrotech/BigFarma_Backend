@@ -1,6 +1,7 @@
 import logging
 from typing import List, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_, func
 
 from features.marketplace.models import Product, Order, Review, AvailabilityStatus, OrderStatus
 from features.marketplace.schemas import ProductCreate, ProductUpdate, OrderCreate, ReviewCreate
@@ -19,6 +20,29 @@ class MarketplaceService:
         if not farmer_profile:
             raise ValueError("Farmer profile not found")
         
+        # Check for duplicate product
+        existing_product = self.db.query(Product).filter(
+            Product.farmer_id == farmer_id,
+            Product.name.ilike(product_data.name),
+            Product.is_listed == True
+        ).first()
+        
+        if existing_product:
+            raise ValueError(f"Product '{product_data.name}' already exists. Please edit the existing listing.")
+        
+        # Validate product data
+        if not product_data.description or len(product_data.description) < 20:
+            raise ValueError("Product description must be at least 20 characters long")
+        
+        if not product_data.images or len(product_data.images) == 0:
+            raise ValueError("At least one product image is required")
+        
+        if product_data.price <= 0:
+            raise ValueError("Product price must be greater than 0")
+        
+        if product_data.quantity_available <= 0:
+            raise ValueError("Quantity must be greater than 0")
+        
         images_str = ",".join(product_data.images)
         
         product = Product(
@@ -27,10 +51,13 @@ class MarketplaceService:
             category=product_data.category,
             description=product_data.description,
             quantity=product_data.quantity,
+            quantity_available=product_data.quantity_available,
             price=product_data.price,
             discount_percentage=product_data.discount_percentage,
             location=farmer_profile.farm_location,  # Use farm location from profile
-            images=images_str
+            images=images_str,
+            status=ProductStatus.PENDING,  # Start as pending for admin approval
+            is_approved=False  # Needs admin approval
         )
         
         self.db.add(product)
@@ -60,12 +87,113 @@ class MarketplaceService:
     def get_product(self, product_id: int) -> Optional[Product]:
         return self.db.query(Product).filter(Product.id == product_id).first()
 
-    def get_all_products(self, skip: int = 0, limit: int = 100) -> List[Product]:
-        return self.db.query(Product).filter(
+    def get_all_products(
+        self, 
+        skip: int = 0, 
+        limit: int = 100,
+        category: Optional[str] = None,
+        search: Optional[str] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
+        location: Optional[str] = None,
+        availability: Optional[str] = None,
+        sort_by: Optional[str] = None
+    ) -> List[Product]:
+        query = self.db.query(Product).filter(
             Product.is_approved == True, 
-            Product.is_listed == True,
-            Product.availability == AvailabilityStatus.IN_STOCK
-        ).offset(skip).limit(limit).all()
+            Product.is_listed == True
+        )
+        
+        # Handle availability filter
+        if availability == "in_stock":
+            query = query.filter(Product.availability == AvailabilityStatus.IN_STOCK)
+        elif availability == "out_of_stock":
+            query = query.filter(Product.availability == AvailabilityStatus.OUT_OF_STOCK)
+        elif availability != "all":
+            # Default: only show in stock items
+            query = query.filter(Product.availability == AvailabilityStatus.IN_STOCK)
+        
+        # Add filters
+        if category:
+            query = query.filter(Product.category == category)
+        
+        if search:
+            # Search in name and description
+            query = query.filter(
+                or_(
+                    Product.name.ilike(f"%{search}%"),
+                    Product.description.ilike(f"%{search}%")
+                )
+            )
+        
+        if min_price is not None:
+            query = query.filter(Product.price >= min_price)
+            
+        if max_price is not None:
+            query = query.filter(Product.price <= max_price)
+        
+        if location:
+            query = query.filter(Product.location.ilike(f"%{location}%"))
+        
+        # Sorting
+        if sort_by == "price_asc":
+            query = query.order_by(Product.price.asc())
+        elif sort_by == "price_desc":
+            query = query.order_by(Product.price.desc())
+        elif sort_by == "rating":
+            query = query.order_by(Product.average_rating.desc())
+        elif sort_by == "newest":
+            query = query.order_by(Product.created_at.desc())
+        else:
+            # Default: newest first
+            query = query.order_by(Product.created_at.desc())
+        
+        return query.offset(skip).limit(limit).all()
+    
+    def get_products_count(
+        self,
+        category: Optional[str] = None,
+        search: Optional[str] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
+        location: Optional[str] = None,
+        availability: Optional[str] = None
+    ) -> int:
+        """Get total count of products with filters"""
+        query = self.db.query(func.count(Product.id)).filter(
+            Product.is_approved == True, 
+            Product.is_listed == True
+        )
+        
+        # Handle availability filter
+        if availability == "in_stock":
+            query = query.filter(Product.availability == AvailabilityStatus.IN_STOCK)
+        elif availability == "out_of_stock":
+            query = query.filter(Product.availability == AvailabilityStatus.OUT_OF_STOCK)
+        elif availability != "all":
+            query = query.filter(Product.availability == AvailabilityStatus.IN_STOCK)
+        
+        if category:
+            query = query.filter(Product.category == category)
+        
+        if search:
+            query = query.filter(
+                or_(
+                    Product.name.ilike(f"%{search}%"),
+                    Product.description.ilike(f"%{search}%")
+                )
+            )
+        
+        if min_price is not None:
+            query = query.filter(Product.price >= min_price)
+            
+        if max_price is not None:
+            query = query.filter(Product.price <= max_price)
+        
+        if location:
+            query = query.filter(Product.location.ilike(f"%{location}%"))
+        
+        return query.scalar() or 0
 
     def delete_product(self, product_id: int, farmer_id: int) -> bool:
         product = self.db.query(Product).filter(Product.id == product_id, Product.farmer_id == farmer_id).first()
@@ -97,12 +225,21 @@ class MarketplaceService:
         discounted_price = product.price * (1 - product.discount_percentage / 100)
         total_price = discounted_price  # This would need proper calculation based on quantity
         
+        # Generate order number
+        from datetime import datetime
+        import random
+        import string
+        date_part = datetime.now().strftime("%Y%m%d")
+        random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        order_number = f"BF{date_part}{random_part}"
+        
         order = Order(
             product_id=order_data.product_id,
             consumer_id=consumer_id,
             quantity_ordered=order_data.quantity_ordered,
             total_price=total_price,
-            delivery_address=order_data.delivery_address
+            delivery_address=order_data.delivery_address,
+            order_number=order_number
         )
         
         # Update product quantity (this would need proper quantity parsing)

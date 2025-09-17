@@ -43,7 +43,7 @@ async def get_my_orders(
         
         order_response = OrderDetailResponse(
             id=order.id,
-            order_number=getattr(order, 'order_number', f"BF{order.id:06d}"),  # Fallback if no order_number
+            order_number=order.order_number if order.order_number else f"BF{order.id:06d}",  # Ensure never None
             consumer_id=order.consumer_id,
             product_id=order.product_id,
             quantity_ordered=order.quantity_ordered,
@@ -117,7 +117,7 @@ async def get_order_details(
     
     return OrderWithDetailsResponse(
         id=order.id,
-        order_number=getattr(order, 'order_number', f"BF{order.id:06d}"),
+        order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
         consumer_id=order.consumer_id,
         product_id=order.product_id,
         quantity_ordered=order.quantity_ordered,
@@ -186,7 +186,7 @@ async def confirm_delivery(
     
     return OrderDetailResponse(
         id=order.id,
-        order_number=getattr(order, 'order_number', f"BF{order.id:06d}"),
+        order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
         consumer_id=order.consumer_id,
         product_id=order.product_id,
         quantity_ordered=order.quantity_ordered,
@@ -293,7 +293,7 @@ async def update_order_status(
     
     return OrderDetailResponse(
         id=order.id,
-        order_number=getattr(order, 'order_number', f"BF{order.id:06d}"),
+        order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
         consumer_id=order.consumer_id,
         product_id=order.product_id,
         quantity_ordered=order.quantity_ordered,
