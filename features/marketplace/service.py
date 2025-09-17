@@ -97,12 +97,21 @@ class MarketplaceService:
         discounted_price = product.price * (1 - product.discount_percentage / 100)
         total_price = discounted_price  # This would need proper calculation based on quantity
         
+        # Generate order number
+        from datetime import datetime
+        import random
+        import string
+        date_part = datetime.now().strftime("%Y%m%d")
+        random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        order_number = f"BF{date_part}{random_part}"
+        
         order = Order(
             product_id=order_data.product_id,
             consumer_id=consumer_id,
             quantity_ordered=order_data.quantity_ordered,
             total_price=total_price,
-            delivery_address=order_data.delivery_address
+            delivery_address=order_data.delivery_address,
+            order_number=order_number
         )
         
         # Update product quantity (this would need proper quantity parsing)

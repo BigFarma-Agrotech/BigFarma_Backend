@@ -5,7 +5,7 @@ from typing import List
 from database import get_db
 from features.marketplace.schemas import (
     ProductCreate, ProductResponse, ProductUpdate, ProductDetailResponse,
-    ProductPublicResponse, OrderCreate, OrderResponse, OrderDetailResponse,
+    ProductPublicResponse, OrderCreate, OrderResponse,
     ReviewCreate, ReviewResponse
 )
 from features.marketplace.service import MarketplaceService
@@ -178,28 +178,7 @@ async def create_order(
         raise HTTPException(status_code=400, detail="Could not create order")
     return order
 
-@router.get("/orders", response_model=List[OrderDetailResponse])
-async def get_my_orders(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    service = MarketplaceService(db)
-    orders = service.get_user_orders(current_user.id)
-    
-    # Enhance order details
-    enhanced_orders = []
-    for order in orders:
-        product = order.product
-        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
-        
-        enhanced_orders.append(OrderDetailResponse(
-            **order.__dict__,
-            product_name=product.name,
-            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
-            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
-        ))
-    
-    return enhanced_orders
+
 
 # Review management (available to all users)
 @router.post("/reviews", response_model=ReviewResponse)
