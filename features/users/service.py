@@ -31,33 +31,34 @@ class UserService:
         if existing_profile:
             raise ValueError("Farmer profile already exists")
         
-        # Update user contact information if provided in profile and missing in user record
-        profile_dict = profile_data.dict()
+        # Convert profile data to dict and handle email/phone separately
+        profile_dict = profile_data.dict(exclude_unset=True)
         update_user_data = {}
         
-        # If user doesn't have email but profile provides it, update user
-        if not user.email and profile_dict.get('email'):
-            update_user_data['email'] = profile_dict['email']
-            # Remove from profile data since we'll store it in user table
-            del profile_dict['email']
+        # Extract contact info from profile data to update user record
+        email = profile_dict.pop('email', None)
+        phone = profile_dict.pop('phone', None)
         
-        # If user doesn't have phone but profile provides it, update user
-        if not user.phone_number and profile_dict.get('phone'):
-            update_user_data['phone_number'] = profile_dict['phone']
-            # Remove from profile data since we'll store it in user table
-            del profile_dict['phone']
+        # Update user email if provided and user doesn't have one
+        if email and not user.email:
+            update_user_data['email'] = email
+        
+        # Update user phone if provided and user doesn't have one
+        if phone and not user.phone_number:
+            update_user_data['phone_number'] = phone
         
         # Update user record if needed
         if update_user_data:
             for key, value in update_user_data.items():
                 setattr(user, key, value)
-            self.db.commit()
         
-        # Create new profile
+        # Create new profile (without email/phone fields)
         farmer_profile = FarmerProfile(**profile_dict, user_id=user_id)
         self.db.add(farmer_profile)
         
+        # Mark profile_setup as True
         user.profile_setup = True
+        
         self.db.commit()
         self.db.refresh(farmer_profile)
         
@@ -71,6 +72,20 @@ class UserService:
         
         # Update only provided fields
         update_data = profile_data.dict(exclude_unset=True)
+        
+        # Extract contact info from update data to update user record if needed
+        email = update_data.pop('email', None)
+        phone = update_data.pop('phone', None)
+        
+        # Update user contact info if provided
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if user:
+            if email and email != user.email:
+                user.email = email
+            if phone and phone != user.phone_number:
+                user.phone_number = phone
+        
+        # Update profile fields
         for field, value in update_data.items():
             setattr(farmer_profile, field, value)
         
@@ -114,36 +129,38 @@ class UserService:
         if existing_profile:
             raise ValueError("Consumer profile already exists")
         
-        # Update user contact information if provided in profile and missing in user record
-        profile_dict = profile_data.dict()
+        # Convert profile data to dict and handle email/phone separately
+        profile_dict = profile_data.dict(exclude_unset=True)
         update_user_data = {}
         
-        # If user doesn't have email but profile provides it, update user
-        if not user.email and profile_dict.get('email'):
-            update_user_data['email'] = profile_dict['email']
-            # Remove from profile data since we'll store it in user table
-            del profile_dict['email']
+        # Extract contact info from profile data to update user record
+        email = profile_dict.pop('email', None)
+        phone = profile_dict.pop('phone', None)
         
-        # If user doesn't have phone but profile provides it, update user
-        if not user.phone_number and profile_dict.get('phone'):
-            update_user_data['phone_number'] = profile_dict['phone']
-            del profile_dict['phone']
+        # Update user email if provided and user doesn't have one
+        if email and not user.email:
+            update_user_data['email'] = email
+        
+        # Update user phone if provided and user doesn't have one
+        if phone and not user.phone_number:
+            update_user_data['phone_number'] = phone
         
         # Update user record if needed
         if update_user_data:
             for key, value in update_user_data.items():
                 setattr(user, key, value)
-            self.db.commit()
         
         # Convert crop preferences list to comma-separated string
         if profile_dict.get('crop_preferences'):
             profile_dict['crop_preferences'] = ','.join(profile_dict['crop_preferences'])
         
-        # Create new profile
+        # Create new profile (without email/phone fields)
         consumer_profile = ConsumerProfile(**profile_dict, user_id=user_id)
         self.db.add(consumer_profile)
         
+        # Mark profile_setup as True
         user.profile_setup = True
+        
         self.db.commit()
         self.db.refresh(consumer_profile)
         
@@ -158,10 +175,23 @@ class UserService:
         # Update only provided fields
         update_data = profile_data.dict(exclude_unset=True)
         
+        # Extract contact info from update data to update user record if needed
+        email = update_data.pop('email', None)
+        phone = update_data.pop('phone', None)
+        
+        # Update user contact info if provided
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if user:
+            if email and email != user.email:
+                user.email = email
+            if phone and phone != user.phone_number:
+                user.phone_number = phone
+        
         # Convert crop preferences list to comma-separated string
         if 'crop_preferences' in update_data and update_data['crop_preferences']:
             update_data['crop_preferences'] = ','.join(update_data['crop_preferences'])
         
+        # Update profile fields
         for field, value in update_data.items():
             setattr(consumer_profile, field, value)
         

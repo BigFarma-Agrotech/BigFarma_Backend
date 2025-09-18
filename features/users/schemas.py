@@ -10,10 +10,6 @@ class FarmerProfileBase(BaseModel):
     profile_picture: Optional[str] = None
     id_document: str  # URL to stored ID document
     
-    # Contact Information (to update user table if needed)
-    email: Optional[EmailStr] = None
-    phone: Optional[str] = None
-    
     # Farm Information
     farm_name: str = Field(..., min_length=2, max_length=150)
     farm_type: FarmType
@@ -23,7 +19,9 @@ class FarmerProfileBase(BaseModel):
     years_experience: Optional[int] = Field(None, ge=0)
 
 class FarmerProfileCreate(FarmerProfileBase):
-    pass
+    # Contact Information (to update user table if needed)
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
 
 class FarmerProfileResponse(BaseModel):
     id: int
@@ -50,29 +48,31 @@ class FarmerProfileUpdate(BaseModel):
     full_name: Optional[str] = Field(None, min_length=2, max_length=100)
     home_address: Optional[str] = Field(None, min_length=5, max_length=500)
     profile_picture: Optional[str] = None
-    email: Optional[EmailStr] = None
-    phone: Optional[str] = None
     farm_name: Optional[str] = None
     farm_type: Optional[FarmType] = None
     farm_image: Optional[str] = None
     farm_location: Optional[str] = Field(None, min_length=5, max_length=500)
     farm_size: Optional[str] = Field(None, min_length=2, max_length=50)
     years_experience: Optional[int] = Field(None, ge=0)
+    
+    # Optional fields that will be used to update User model
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
 
 class ConsumerProfileBase(BaseModel):
     first_name: str = Field(..., min_length=2, max_length=50)
     last_name: str = Field(..., min_length=2, max_length=50)
     address: str = Field(..., min_length=5, max_length=500)
     profile_picture: Optional[str] = None
-    
-    # Contact Information (to update user table if needed)
-    email: Optional[EmailStr] = None
-    phone: Optional[str] = None
-    
     crop_preferences: Optional[List[CropPreference]] = None
 
 class ConsumerProfileCreate(ConsumerProfileBase):
-    pass
+    # Contact Information (to update user table if needed)
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
 
 class ConsumerProfileResponse(BaseModel):
     id: int
@@ -93,15 +93,18 @@ class ConsumerProfileUpdate(BaseModel):
     last_name: Optional[str] = Field(None, min_length=2, max_length=50)
     address: Optional[str] = Field(None, min_length=5, max_length=500)
     profile_picture: Optional[str] = None
+    crop_preferences: Optional[List[CropPreference]] = None
+    
+    # Optional fields that will be used to update User model
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
-    crop_preferences: Optional[List[CropPreference]] = None
 
 class UserProfileResponse(BaseModel):
     id: int
     email: Optional[str] = None
     phone_number: Optional[str] = None
     category: UserCategory
+    profile_setup: bool
     is_verified: bool
     is_active: bool
     created_at: datetime
