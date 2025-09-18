@@ -12,6 +12,12 @@ class AvailabilityStatus(str, enum.Enum):
     IN_STOCK = "in_stock"
     OUT_OF_STOCK = "out_of_stock"
 
+class ProductStatus(str, enum.Enum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    OUT_OF_STOCK = "out_of_stock"
+    UNLISTED = "unlisted"
+
 class OrderStatus(str, enum.Enum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
