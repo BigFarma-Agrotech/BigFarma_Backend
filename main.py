@@ -7,6 +7,7 @@ from features.auth.routes import router as auth_router
 from features.users.routes import router as users_router
 from features.marketplace.routes import router as marketplace_router
 from features.orders.routes import router as orders_router
+from features.group_buy.routes import router as group_buy_router
 from config import settings
 
 
@@ -32,6 +33,7 @@ app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"])
 app.include_router(users_router, prefix="/api/v1", tags=["Users"])
 app.include_router(marketplace_router, prefix="/api/v1", tags=["Marketplace"])
 app.include_router(orders_router, prefix="/api/v1", tags=["Orders"])
+app.include_router(group_buy_router, prefix="/api/v1", tags=["Group Buy"])
 
 @app.get("/")
 async def root():
