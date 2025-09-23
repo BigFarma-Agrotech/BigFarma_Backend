@@ -6,8 +6,8 @@ from difflib import get_close_matches
 from database import get_db
 from features.marketplace.schemas import (
     ProductCreate, ProductResponse, ProductUpdate, ProductDetailResponse,
-    ProductPublicResponse, OrderCreate, OrderResponse,
-    ReviewCreate, ReviewResponse
+    ProductPublicResponse, OrderCreate, OrderResponse, OrderDetailResponse,
+    ReviewCreate, ReviewResponse, ProductSearchResponse, ProductFilterRequest
 )
 from features.marketplace.service import MarketplaceService
 from features.auth.models import User
@@ -93,17 +93,7 @@ async def get_all_products(
         # Parse images
         images = product.images.split(',') if product.images else []
         
-        # Check product completeness
-        is_complete = all([
-            product.name,
-            product.description and len(product.description) > 20,
-            product.images,
-            product.price > 0,
-            product.quantity,
-            product.location
-        ])
-        
-        product_dict = ProductPublicResponse(
+        public_products.append(ProductPublicResponse(
             id=product.id,
             name=product.name,
             category=product.category,
@@ -117,8 +107,7 @@ async def get_all_products(
             availability=product.availability,
             farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
             farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
-        )
-        public_products.append(product_dict)
+        ))
     
     # Get total count for pagination
     total_count = service.get_products_count(
@@ -180,12 +169,33 @@ async def get_product_detail(product_id: int, db: Session = Depends(get_db)):
     if not farmer_profile:
         raise HTTPException(status_code=404, detail="Farmer profile not found")
     
-    farmer = product.farmer
+    # Convert images from string to list
+    images = product.images.split(',') if product.images else []
+    
+    product_dict = {
+        "id": product.id,
+        "farmer_id": product.farmer_id,
+        "name": product.name,
+        "category": product.category,
+        "description": product.description,
+        "quantity": product.quantity,
+        "price": product.price,
+        "discount_percentage": product.discount_percentage,
+        "location": product.location,
+        "images": images,
+        "is_approved": product.is_approved,
+        "is_listed": product.is_listed,
+        "availability": product.availability,
+        "total_ratings": product.total_ratings,
+        "average_rating": product.average_rating,
+        "created_at": product.created_at,
+        "updated_at": product.updated_at
+    }
     
     return ProductDetailResponse(
-        **product.__dict__,
+        **product_dict,
         farmer={
-            "id": farmer.id,
+            "id": product.farmer.id,
             "full_name": farmer_profile.full_name,
             "profile_picture": farmer_profile.profile_picture,
             "farm_name": farmer_profile.farm_name,
@@ -195,7 +205,183 @@ async def get_product_detail(product_id: int, db: Session = Depends(get_db)):
         discounted_price=product.price * (1 - product.discount_percentage / 100)
     )
 
-# Farmer product management (uses full response)
+# NEW ENDPOINTS FOR SEARCH AND FILTERING
+
+@router.get("/products/search", response_model=ProductSearchResponse)
+async def search_products(
+    q: str = Query(..., description="Search query for products"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db)
+):
+    """Search products by name, description, farm name, or crop type"""
+    service = MarketplaceService(db)
+    skip = (page - 1) * page_size
+    
+    products = service.search_products(q, skip, page_size)
+    total_count = service.get_total_product_count()
+    
+    # Convert to public response with image handling
+    public_products = []
+    for product in products:
+        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
+        
+        # Parse images from string to list
+        images = product.images.split(',') if product.images else []
+        
+        public_products.append(ProductPublicResponse(
+            id=product.id,
+            name=product.name,
+            category=product.category,
+            description=product.description,
+            quantity=product.quantity,
+            price=product.price,
+            discount_percentage=product.discount_percentage,
+            discounted_price=product.price * (1 - product.discount_percentage / 100),
+            location=product.location,
+            images=images,
+            availability=product.availability,
+            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
+            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
+        ))
+    
+    return ProductSearchResponse(
+        products=public_products,
+        total_count=total_count,
+        page=page,
+        page_size=page_size
+    )
+
+@router.post("/products/filter", response_model=ProductSearchResponse)
+async def filter_products(
+    filters: ProductFilterRequest,
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db)
+):
+    """Filter products by various criteria"""
+    service = MarketplaceService(db)
+    skip = (page - 1) * page_size
+    
+    # Convert filters to dict
+    filter_dict = filters.dict(exclude_unset=True)
+    
+    products = service.filter_products(filter_dict, skip, page_size)
+    total_count = len(products)  # For simplicity, use the filtered count
+    
+    # Convert to public response
+    public_products = []
+    for product in products:
+        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
+        
+        # Parse images from string to list
+        images = product.images.split(',') if product.images else []
+        
+        public_products.append(ProductPublicResponse(
+            id=product.id,
+            name=product.name,
+            category=product.category,
+            description=product.description,
+            quantity=product.quantity,
+            price=product.price,
+            discount_percentage=product.discount_percentage,
+            discounted_price=product.price * (1 - product.discount_percentage / 100),
+            location=product.location,
+            images=images,
+            availability=product.availability,
+            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
+            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
+        ))
+    
+    return ProductSearchResponse(
+        products=public_products,
+        total_count=total_count,
+        page=page,
+        page_size=page_size
+    )
+
+@router.get("/products/{product_id}/similar", response_model=List[ProductPublicResponse])
+async def get_similar_products(
+    product_id: int,
+    limit: int = Query(6, ge=1, le=20, description="Number of similar products"),
+    db: Session = Depends(get_db)
+):
+    """Get products similar to the specified product"""
+    service = MarketplaceService(db)
+    similar_products = service.get_similar_products(product_id, limit)
+    
+    # Convert to public response
+    public_products = []
+    for product in similar_products:
+        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
+        
+        # Parse images from string to list
+        images = product.images.split(',') if product.images else []
+        
+        public_products.append(ProductPublicResponse(
+            id=product.id,
+            name=product.name,
+            category=product.category,
+            description=product.description,
+            quantity=product.quantity,
+            price=product.price,
+            discount_percentage=product.discount_percentage,
+            discounted_price=product.price * (1 - product.discount_percentage / 100),
+            location=product.location,
+            images=images,
+            availability=product.availability,
+            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
+            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
+        ))
+    
+    return public_products
+
+@router.get("/crops/{crop_type}/products", response_model=ProductSearchResponse)
+async def get_products_by_crop_type(
+    crop_type: str,
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db)
+):
+    """Get products filtered by specific crop type"""
+    service = MarketplaceService(db)
+    skip = (page - 1) * page_size
+    
+    products = service.get_products_by_crop_type(crop_type, skip, page_size)
+    total_count = len(products)  # For simplicity
+    
+    # Convert to public response
+    public_products = []
+    for product in products:
+        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
+        
+        # Parse images from string to list
+        images = product.images.split(',') if product.images else []
+        
+        public_products.append(ProductPublicResponse(
+            id=product.id,
+            name=product.name,
+            category=product.category,
+            description=product.description,
+            quantity=product.quantity,
+            price=product.price,
+            discount_percentage=product.discount_percentage,
+            discounted_price=product.price * (1 - product.discount_percentage / 100),
+            location=product.location,
+            images=images,
+            availability=product.availability,
+            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
+            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
+        ))
+    
+    return ProductSearchResponse(
+        products=public_products,
+        total_count=total_count,
+        page=page,
+        page_size=page_size
+    )
+
+# Farmer product management
 @router.post("/farmers/products", response_model=ProductResponse)
 async def create_product(
     product_data: ProductCreate,
@@ -227,7 +413,13 @@ async def create_product(
     service = MarketplaceService(db)
     try:
         product = service.create_product(current_user.id, product_data)
-        return product
+        
+        # Convert images back to list for response
+        product_dict = product.__dict__.copy()
+        if isinstance(product_dict.get('images'), str):
+            product_dict['images'] = product_dict['images'].split(',') if product_dict['images'] else []
+        
+        return ProductResponse(**product_dict)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -245,7 +437,13 @@ async def update_product(
     product = service.update_product(product_id, current_user.id, product_data)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product
+    
+    # Convert images back to list for response
+    product_dict = product.__dict__.copy()
+    if isinstance(product_dict.get('images'), str):
+        product_dict['images'] = product_dict['images'].split(',') if product_dict['images'] else []
+    
+    return ProductResponse(**product_dict)
 
 @router.get("/farmers/products", response_model=List[ProductResponse])
 async def get_my_products(
@@ -256,7 +454,17 @@ async def get_my_products(
         raise HTTPException(status_code=403, detail="Only farmers can view their products")
     
     service = MarketplaceService(db)
-    return service.get_farmer_products(current_user.id)
+    products = service.get_farmer_products(current_user.id)
+    
+    # Convert images from string to list for each product
+    response_products = []
+    for product in products:
+        product_dict = product.__dict__.copy()
+        if isinstance(product_dict.get('images'), str):
+            product_dict['images'] = product_dict['images'].split(',') if product_dict['images'] else []
+        response_products.append(ProductResponse(**product_dict))
+    
+    return response_products
 
 @router.delete("/farmers/products/{product_id}")
 async def delete_product(
@@ -304,7 +512,7 @@ async def remove_discount(
         raise HTTPException(status_code=404, detail="Product not found")
     return product
 
-# Order management (available to all users)
+# Order management
 @router.post("/orders", response_model=OrderResponse)
 async def create_order(
     order_data: OrderCreate,
@@ -317,9 +525,30 @@ async def create_order(
         raise HTTPException(status_code=400, detail="Could not create order")
     return order
 
+@router.get("/orders", response_model=List[OrderDetailResponse])
+async def get_my_orders(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    service = MarketplaceService(db)
+    orders = service.get_user_orders(current_user.id)
+    
+    # Enhance order details
+    enhanced_orders = []
+    for order in orders:
+        product = order.product
+        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
+        
+        enhanced_orders.append(OrderDetailResponse(
+            **order.__dict__,
+            product_name=product.name,
+            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
+            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
+        ))
+    
+    return enhanced_orders
 
-
-# Review management (available to all users)
+# Review management
 @router.post("/reviews", response_model=ReviewResponse)
 async def create_review(
     review_data: ReviewCreate,

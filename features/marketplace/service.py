@@ -1,9 +1,9 @@
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
 
-from features.marketplace.models import Product, Order, Review, AvailabilityStatus, OrderStatus
+from features.marketplace.models import Product, Order, Review, AvailabilityStatus, OrderStatus, ProductCategory
 from features.marketplace.schemas import ProductCreate, ProductUpdate, OrderCreate, ReviewCreate
 from features.users.models import FarmerProfile
 
@@ -40,9 +40,6 @@ class MarketplaceService:
         if product_data.price <= 0:
             raise ValueError("Product price must be greater than 0")
         
-        if product_data.quantity_available <= 0:
-            raise ValueError("Quantity must be greater than 0")
-        
         images_str = ",".join(product_data.images)
         
         product = Product(
@@ -51,13 +48,10 @@ class MarketplaceService:
             category=product_data.category,
             description=product_data.description,
             quantity=product_data.quantity,
-            quantity_available=product_data.quantity_available,
             price=product_data.price,
             discount_percentage=product_data.discount_percentage,
-            location=farmer_profile.farm_location,  # Use farm location from profile
-            images=images_str,
-            status=ProductStatus.PENDING,  # Start as pending for admin approval
-            is_approved=False  # Needs admin approval
+            location=product_data.location,
+            images=images_str
         )
         
         self.db.add(product)
@@ -71,7 +65,7 @@ class MarketplaceService:
             return None
         
         update_dict = update_data.dict(exclude_unset=True)
-        if 'images' in update_dict:
+        if 'images' in update_dict and update_dict['images']:
             update_dict['images'] = ",".join(update_dict['images'])
         
         for key, value in update_dict.items():
@@ -215,6 +209,101 @@ class MarketplaceService:
     def remove_discount(self, product_id: int, farmer_id: int) -> Optional[Product]:
         return self.add_discount(product_id, farmer_id, 0.0)
 
+    # NEW METHODS FOR SEARCH AND FILTERING
+    def search_products(self, query: str, skip: int = 0, limit: int = 100) -> List[Product]:
+        """Search products by name, description, or farm name"""
+        if not query:
+            return self.get_all_products(skip, limit)
+        
+        search_term = f"%{query}%"
+        
+        products = self.db.query(Product).join(FarmerProfile, Product.farmer_id == FarmerProfile.user_id).filter(
+            and_(
+                Product.is_approved == True,
+                Product.is_listed == True,
+                Product.availability == AvailabilityStatus.IN_STOCK,
+                or_(
+                    Product.name.ilike(search_term),
+                    Product.description.ilike(search_term),
+                    FarmerProfile.farm_name.ilike(search_term),
+                    FarmerProfile.farm_type.ilike(search_term)
+                )
+            )
+        ).offset(skip).limit(limit).all()
+        
+        return products
+
+    def filter_products(self, filters: Dict[str, Any], skip: int = 0, limit: int = 100) -> List[Product]:
+        """Filter products by various criteria"""
+        query = self.db.query(Product).join(FarmerProfile, Product.farmer_id == FarmerProfile.user_id).filter(
+            Product.is_approved == True,
+            Product.is_listed == True,
+            Product.availability == AvailabilityStatus.IN_STOCK
+        )
+        
+        # Apply filters
+        if filters.get('categories'):
+            query = query.filter(Product.category.in_(filters['categories']))
+        
+        if filters.get('farm_types'):
+            query = query.filter(FarmerProfile.farm_type.in_(filters['farm_types']))
+        
+        if filters.get('min_price') is not None:
+            query = query.filter(Product.price >= filters['min_price'])
+        
+        if filters.get('max_price') is not None:
+            query = query.filter(Product.price <= filters['max_price'])
+        
+        if filters.get('locations'):
+            location_filters = [Product.location.ilike(f"%{loc}%") for loc in filters['locations']]
+            query = query.filter(or_(*location_filters))
+        
+        if filters.get('crop_types'):
+            # For crop filtering, check product name, description, and farm type
+            crop_filters = []
+            for crop in filters['crop_types']:
+                crop_filters.append(Product.name.ilike(f"%{crop}%"))
+                crop_filters.append(Product.description.ilike(f"%{crop}%"))
+                crop_filters.append(FarmerProfile.farm_type.ilike(f"%{crop}%"))
+            
+            query = query.filter(or_(*crop_filters))
+        
+        products = query.offset(skip).limit(limit).all()
+        return products
+
+    def get_similar_products(self, product_id: int, limit: int = 6) -> List[Product]:
+        """Get products similar to the given product"""
+        current_product = self.get_product(product_id)
+        if not current_product:
+            return []
+        
+        # Find similar products by same category, same farmer, or similar price range
+        similar_products = self.db.query(Product).join(FarmerProfile, Product.farmer_id == FarmerProfile.user_id).filter(
+            and_(
+                Product.is_approved == True,
+                Product.is_listed == True,
+                Product.availability == AvailabilityStatus.IN_STOCK,
+                Product.id != product_id,
+                or_(
+                    Product.category == current_product.category,
+                    Product.farmer_id == current_product.farmer_id,
+                    and_(
+                        Product.price >= current_product.price * 0.7,
+                        Product.price <= current_product.price * 1.3
+                    ),
+                    FarmerProfile.farm_type == self.db.query(FarmerProfile.farm_type)
+                        .filter(FarmerProfile.user_id == current_product.farmer_id)
+                        .scalar_subquery()
+                )
+            )
+        ).limit(limit).all()
+        
+        return similar_products
+
+    def get_products_by_crop_type(self, crop_type: str, skip: int = 0, limit: int = 100) -> List[Product]:
+        """Get products filtered by specific crop type"""
+        return self.filter_products({'crop_types': [crop_type]}, skip, limit)
+
     # Order methods
     def create_order(self, consumer_id: int, order_data: OrderCreate) -> Optional[Order]:
         product = self.get_product(order_data.product_id)
@@ -223,7 +312,7 @@ class MarketplaceService:
         
         # Calculate total price with discount
         discounted_price = product.price * (1 - product.discount_percentage / 100)
-        total_price = discounted_price  # This would need proper calculation based on quantity
+        total_price = discounted_price
         
         # Generate order number
         from datetime import datetime
@@ -242,8 +331,7 @@ class MarketplaceService:
             order_number=order_number
         )
         
-        # Update product quantity (this would need proper quantity parsing)
-        # For simplicity, we'll just mark as out of stock if this is the first order
+        # Update product availability
         product.availability = AvailabilityStatus.OUT_OF_STOCK
         
         self.db.add(order)
