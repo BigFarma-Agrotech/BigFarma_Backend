@@ -14,7 +14,6 @@ from features.users.service import UserService
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-
 @router.get("/profile", response_model=UserProfileResponse)
 async def get_current_user_profile(
     current_user: User = Depends(get_current_active_user),
@@ -125,13 +124,7 @@ async def get_consumer_profile(
     if not consumer_profile:
         raise HTTPException(status_code=404, detail="Consumer profile not found")
     
-    # Convert comma-separated preferences back to list
-    response_data = ConsumerProfileResponse.from_orm(consumer_profile)
-    if consumer_profile.crop_preferences:
-        response_data.crop_preferences = consumer_profile.crop_preferences.split(',')
-    
-    return response_data
-
+    return ConsumerProfileResponse.from_orm(consumer_profile)
 
 @router.put("/consumer-profile", response_model=ConsumerProfileResponse)
 async def update_consumer_profile(

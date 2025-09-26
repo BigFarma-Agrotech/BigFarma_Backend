@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, DateTime, Enum, ForeignKey, Text
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, Enum, ForeignKey, Text, Sequence
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -25,22 +25,21 @@ class CropPreference(str, enum.Enum):
 class FarmerProfile(Base):
     __tablename__ = "farmer_profiles"
     
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     
     # Personal Information
     full_name = Column(String, nullable=False)
     home_address = Column(Text, nullable=False)
-    profile_picture = Column(String, nullable=True)  # URL to stored image
-    id_document = Column(String, nullable=False)  # URL to stored ID document
-    
+    profile_picture = Column(String, nullable=True)
+    id_document = Column(String, nullable=False)
     
     # Farm Information
     farm_name = Column(String, nullable=False)
     farm_type = Column(Enum(FarmType), nullable=False)
-    farm_image = Column(String, nullable=True)  # URL to stored farm image
-    farm_location = Column(Text, nullable=False)  # Address or GPS coordinates
-    farm_size = Column(String, nullable=False)  # e.g., "10 acres", "5 hectares"
+    farm_image = Column(String, nullable=True)
+    farm_location = Column(Text, nullable=False)
+    farm_size = Column(String, nullable=False)
     years_experience = Column(Integer, nullable=True)
     
     # Verification Status
@@ -55,18 +54,17 @@ class FarmerProfile(Base):
 class ConsumerProfile(Base):
     __tablename__ = "consumer_profiles"
     
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     
     # Personal Information
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
-    address = Column(Text, nullable=False)  # Address or GPS coordinates
-    profile_picture = Column(String, nullable=True)  # URL to stored image
-    
+    address = Column(Text, nullable=False)
+    profile_picture = Column(String, nullable=True)
     
     # Preferences
-    crop_preferences = Column(String, nullable=True)  # Comma-separated preferences
+    crop_preferences = Column(String, nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

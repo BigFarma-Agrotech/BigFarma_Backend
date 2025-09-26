@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, validator
 from typing import Optional, List
 from datetime import datetime
 from features.auth.models import UserCategory
@@ -8,8 +8,8 @@ class FarmerProfileBase(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=100)
     home_address: str = Field(..., min_length=5, max_length=500)
     profile_picture: Optional[str] = None
-    id_document: str  # URL to stored ID document
-    
+    id_document: str
+
     # Farm Information
     farm_name: str = Field(..., min_length=2, max_length=150)
     farm_type: FarmType
@@ -19,7 +19,6 @@ class FarmerProfileBase(BaseModel):
     years_experience: Optional[int] = Field(None, ge=0)
 
 class FarmerProfileCreate(FarmerProfileBase):
-    # Contact Information (to update user table if needed)
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
 
@@ -55,7 +54,6 @@ class FarmerProfileUpdate(BaseModel):
     farm_size: Optional[str] = Field(None, min_length=2, max_length=50)
     years_experience: Optional[int] = Field(None, ge=0)
     
-    # Optional fields that will be used to update User model
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
     
@@ -70,7 +68,6 @@ class ConsumerProfileBase(BaseModel):
     crop_preferences: Optional[List[CropPreference]] = None
 
 class ConsumerProfileCreate(ConsumerProfileBase):
-    # Contact Information (to update user table if needed)
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
 
@@ -85,6 +82,15 @@ class ConsumerProfileResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     
+    @validator('crop_preferences', pre=True)
+    def convert_crop_preferences(cls, v):
+        if isinstance(v, str):
+            if v.strip():
+                return [pref.strip() for pref in v.split(',')]
+            else:
+                return []
+        return v
+    
     class Config:
         from_attributes = True
 
@@ -95,9 +101,11 @@ class ConsumerProfileUpdate(BaseModel):
     profile_picture: Optional[str] = None
     crop_preferences: Optional[List[CropPreference]] = None
     
-    # Optional fields that will be used to update User model
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
 
 class UserProfileResponse(BaseModel):
     id: int

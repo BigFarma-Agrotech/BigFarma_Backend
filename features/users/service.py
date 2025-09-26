@@ -18,7 +18,6 @@ class UserService:
 
     def create_farmer_profile(self, user_id: int, profile_data: FarmerProfileCreate) -> FarmerProfile:
         """Create a farmer profile for a user and update user contact info if needed."""
-        # Check if user exists and is a farmer
         user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
             raise ValueError("User not found")
@@ -26,37 +25,29 @@ class UserService:
         if user.category != UserCategory.FARMER:
             raise ValueError("User is not a farmer")
         
-        # Check if profile already exists
         existing_profile = self.db.query(FarmerProfile).filter(FarmerProfile.user_id == user_id).first()
         if existing_profile:
             raise ValueError("Farmer profile already exists")
         
-        # Convert profile data to dict and handle email/phone separately
         profile_dict = profile_data.dict(exclude_unset=True)
         update_user_data = {}
         
-        # Extract contact info from profile data to update user record
         email = profile_dict.pop('email', None)
         phone = profile_dict.pop('phone', None)
         
-        # Update user email if provided and user doesn't have one
         if email and not user.email:
             update_user_data['email'] = email
         
-        # Update user phone if provided and user doesn't have one
         if phone and not user.phone_number:
             update_user_data['phone_number'] = phone
         
-        # Update user record if needed
         if update_user_data:
             for key, value in update_user_data.items():
                 setattr(user, key, value)
         
-        # Create new profile (without email/phone fields)
         farmer_profile = FarmerProfile(**profile_dict, user_id=user_id)
         self.db.add(farmer_profile)
         
-        # Mark profile_setup as True
         user.profile_setup = True
         
         self.db.commit()
@@ -70,14 +61,11 @@ class UserService:
         if not farmer_profile:
             return None
         
-        # Update only provided fields
         update_data = profile_data.dict(exclude_unset=True)
         
-        # Extract contact info from update data to update user record if needed
         email = update_data.pop('email', None)
         phone = update_data.pop('phone', None)
         
-        # Update user contact info if provided
         user = self.db.query(User).filter(User.id == user_id).first()
         if user:
             if email and email != user.email:
@@ -85,7 +73,6 @@ class UserService:
             if phone and phone != user.phone_number:
                 user.phone_number = phone
         
-        # Update profile fields
         for field, value in update_data.items():
             setattr(farmer_profile, field, value)
         
@@ -106,7 +93,6 @@ class UserService:
         farmer_profile.is_verified = True
         farmer_profile.verification_date = func.now()
         
-        # Also mark user as verified if not already
         user = self.db.query(User).filter(User.id == user_id).first()
         if user and not user.is_verified:
             user.is_verified = True
@@ -116,7 +102,6 @@ class UserService:
 
     def create_consumer_profile(self, user_id: int, profile_data: ConsumerProfileCreate) -> ConsumerProfile:
         """Create a consumer profile for a user and update user contact info if needed."""
-        # Check if user exists and is a consumer
         user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
             raise ValueError("User not found")
@@ -124,41 +109,41 @@ class UserService:
         if user.category != UserCategory.CONSUMER:
             raise ValueError("User is not a consumer")
         
-        # Check if profile already exists
         existing_profile = self.db.query(ConsumerProfile).filter(ConsumerProfile.user_id == user_id).first()
         if existing_profile:
             raise ValueError("Consumer profile already exists")
         
-        # Convert profile data to dict and handle email/phone separately
         profile_dict = profile_data.dict(exclude_unset=True)
         update_user_data = {}
         
-        # Extract contact info from profile data to update user record
         email = profile_dict.pop('email', None)
         phone = profile_dict.pop('phone', None)
         
-        # Update user email if provided and user doesn't have one
         if email and not user.email:
             update_user_data['email'] = email
         
-        # Update user phone if provided and user doesn't have one
         if phone and not user.phone_number:
             update_user_data['phone_number'] = phone
         
-        # Update user record if needed
         if update_user_data:
             for key, value in update_user_data.items():
                 setattr(user, key, value)
         
-        # Convert crop preferences list to comma-separated string
-        if profile_dict.get('crop_preferences'):
-            profile_dict['crop_preferences'] = ','.join(profile_dict['crop_preferences'])
+        # Validate required fields
+        required_fields = ['first_name', 'last_name', 'address']
+        for field in required_fields:
+            if field not in profile_dict or not profile_dict[field]:
+                raise ValueError(f"Field '{field}' is required")
         
-        # Create new profile (without email/phone fields)
+        # Convert crop preferences
+        if 'crop_preferences' in profile_dict and profile_dict['crop_preferences']:
+            profile_dict['crop_preferences'] = ','.join(profile_dict['crop_preferences'])
+        else:
+            profile_dict['crop_preferences'] = None
+        
         consumer_profile = ConsumerProfile(**profile_dict, user_id=user_id)
         self.db.add(consumer_profile)
         
-        # Mark profile_setup as True
         user.profile_setup = True
         
         self.db.commit()
@@ -172,14 +157,11 @@ class UserService:
         if not consumer_profile:
             return None
         
-        # Update only provided fields
         update_data = profile_data.dict(exclude_unset=True)
         
-        # Extract contact info from update data to update user record if needed
         email = update_data.pop('email', None)
         phone = update_data.pop('phone', None)
         
-        # Update user contact info if provided
         user = self.db.query(User).filter(User.id == user_id).first()
         if user:
             if email and email != user.email:
@@ -187,11 +169,9 @@ class UserService:
             if phone and phone != user.phone_number:
                 user.phone_number = phone
         
-        # Convert crop preferences list to comma-separated string
         if 'crop_preferences' in update_data and update_data['crop_preferences']:
             update_data['crop_preferences'] = ','.join(update_data['crop_preferences'])
         
-        # Update profile fields
         for field, value in update_data.items():
             setattr(consumer_profile, field, value)
         
