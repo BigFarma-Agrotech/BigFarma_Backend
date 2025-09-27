@@ -17,10 +17,7 @@ class CropPreference(str, enum.Enum):
     VEGETABLES = "vegetables"
     FRUITS = "fruits"
     GRAINS = "grains"
-    MEAT = "meat"
-    DAIRY = "dairy"
-    POULTRY = "poultry"
-    FISH = "fish"
+    POULTRY_MEAT = "poultry and meat"
 
 class FarmerProfile(Base):
     __tablename__ = "farmer_profiles"
