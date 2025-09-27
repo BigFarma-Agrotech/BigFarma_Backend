@@ -4,6 +4,7 @@ from typing import List, Optional, Dict, Any
 from difflib import get_close_matches
 
 from database import get_db
+from features.marketplace.models import Product
 from features.marketplace.schemas import (
     ProductCreate, ProductResponse, ProductUpdate, ProductDetailResponse,
     ProductPublicResponse, OrderCreate, OrderResponse, OrderDetailResponse,
@@ -16,16 +17,46 @@ from core.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/marketplace", tags=["Marketplace"])
 
+# Debug endpoint to check all products
+@router.get("/debug/products")
+async def debug_all_products(db: Session = Depends(get_db)):
+    """Debug endpoint to see all products in database"""
+    products = db.query(Product).all()
+    
+    result = []
+    for product in products:
+        result.append({
+            "id": product.id,
+            "name": product.name,
+            "category": product.category.value if hasattr(product.category, 'value') else str(product.category),
+            "price": product.price,
+            "quantity": product.quantity,
+            "location": product.location,
+            "farmer_id": product.farmer_id,
+            "is_approved": product.is_approved,
+            "is_listed": product.is_listed,
+            "availability": product.availability.value if hasattr(product.availability, 'value') else str(product.availability),
+            "images": product.images,
+            "discount_percentage": product.discount_percentage
+        })
+    
+    return {
+        "total_products": len(products),
+        "products": result
+    }
+
 # Categories endpoint
 @router.get("/categories")
 async def get_product_categories():
     """Get available product categories for filtering"""
     return {
         "categories": [
-            {"id": "vegetables", "name": "Vegetables", "icon": "🥬", "parent": "crop"},
-            {"id": "fruits", "name": "Fruits", "icon": "🍎", "parent": "crop"},
-            {"id": "grains", "name": "Grains", "icon": "🌾", "parent": "crop"},
-            {"id": "proteins", "name": "Proteins", "icon": "🥚", "parent": "livestock"}
+            {"id": "vegetables", "name": "Vegetables", "icon": "🥬"},
+            {"id": "fruits", "name": "Fruits", "icon": "🍎"},
+            {"id": "grains", "name": "Grains", "icon": "🌾"},
+            {"id": "proteins", "name": "Proteins", "icon": "🥚"},
+            {"id": "crop", "name": "Crops", "icon": "🌱"},
+            {"id": "livestock", "name": "Livestock", "icon": "🐄"}
         ]
     }
 
@@ -34,7 +65,7 @@ async def get_product_categories():
 async def get_all_products(
     skip: int = 0, 
     limit: int = 100,
-    category: Optional[str] = Query(None, description="Filter by category (vegetables, fruits, grains, proteins)"),
+    category: Optional[str] = Query(None, description="Filter by category"),
     search: Optional[str] = Query(None, description="Search product names"),
     min_price: Optional[float] = Query(None, description="Minimum price"),
     max_price: Optional[float] = Query(None, description="Maximum price"),
@@ -45,16 +76,8 @@ async def get_all_products(
 ):
     service = MarketplaceService(db)
     
-    # Map UI categories to database categories
-    db_category = None
-    if category:
-        category_mapping = {
-            "vegetables": "crop",
-            "fruits": "crop",
-            "grains": "crop",
-            "proteins": "livestock"
-        }
-        db_category = category_mapping.get(category.lower())
+    # Use category directly (no mapping needed)
+    db_category = category
     
     # Get products with filters
     products = service.get_all_products(
@@ -69,10 +92,11 @@ async def get_all_products(
         sort_by=sort_by
     )
     
+    print(f"DEBUG: Found {len(products)} products")
+    
     # Check for spelling suggestions if search is provided
     search_suggestions = []
     if search and len(products) == 0:
-        # Common product names for spell checking
         common_products = [
             "tomato", "tomatoes", "pepper", "peppers", "onion", "onions",
             "rice", "beans", "corn", "maize", "yam", "potato", "potatoes",
@@ -80,9 +104,8 @@ async def get_all_products(
             "watermelon", "pineapple", "orange", "oranges", "banana", "apple",
             "chicken", "eggs", "beef", "fish", "milk"
         ]
-        # Get close matches
         close_matches = get_close_matches(search.lower(), common_products, n=3, cutoff=0.6)
-        search_suggestions = close_matches[:2]  # Max 2 suggestions
+        search_suggestions = close_matches[:2]
     
     # Convert to public response format
     public_products = []
@@ -91,17 +114,25 @@ async def get_all_products(
         farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
         
         # Parse images
-        images = product.images.split(',') if product.images else []
+        images = []
+        if product.images:
+            if isinstance(product.images, str):
+                images = [img.strip() for img in product.images.split(',') if img.strip()]
+            elif isinstance(product.images, list):
+                images = product.images
+        
+        # Calculate discounted price
+        discounted_price = product.price * (1 - (product.discount_percentage or 0) / 100)
         
         public_products.append(ProductPublicResponse(
             id=product.id,
             name=product.name,
             category=product.category,
-            description=product.description,
+            description=product.description or "",
             quantity=product.quantity,
             price=product.price,
-            discount_percentage=product.discount_percentage,
-            discounted_price=product.price * (1 - product.discount_percentage / 100),
+            discount_percentage=product.discount_percentage or 0.0,
+            discounted_price=discounted_price,
             location=product.location,
             images=images,
             availability=product.availability,
@@ -122,7 +153,6 @@ async def get_all_products(
     # Prepare filter suggestions if no results
     filter_suggestions = []
     if len(products) == 0 and any([category, search, min_price, max_price, location]):
-        # Suggest adjusting filters
         if min_price and max_price:
             filter_suggestions.append("Try expanding your price range")
         if location:
@@ -133,11 +163,16 @@ async def get_all_products(
     # Get related products if results are empty
     related_products = []
     if len(products) == 0:
-        # Get some products from same category or any available products
-        related = service.get_all_products(skip=0, limit=4, category=db_category)
+        related = service.get_all_products(skip=0, limit=4, availability="all")
         for rel_product in related:
             farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == rel_product.farmer_id).first()
-            images = rel_product.images.split(',') if rel_product.images else []
+            images = []
+            if rel_product.images:
+                if isinstance(rel_product.images, str):
+                    images = [img.strip() for img in rel_product.images.split(',') if img.strip()]
+                elif isinstance(rel_product.images, list):
+                    images = rel_product.images
+            
             related_products.append({
                 "id": rel_product.id,
                 "name": rel_product.name,
@@ -149,7 +184,7 @@ async def get_all_products(
     return {
         "products": public_products,
         "total_count": total_count,
-        "page": skip // limit + 1,
+        "page": skip // limit + 1 if limit > 0 else 1,
         "page_size": limit,
         "search_suggestions": search_suggestions,
         "filter_suggestions": filter_suggestions,
@@ -169,216 +204,44 @@ async def get_product_detail(product_id: int, db: Session = Depends(get_db)):
     if not farmer_profile:
         raise HTTPException(status_code=404, detail="Farmer profile not found")
     
-    # Convert images from string to list
-    images = product.images.split(',') if product.images else []
+    # Convert images
+    images = []
+    if product.images:
+        if isinstance(product.images, str):
+            images = [img.strip() for img in product.images.split(',') if img.strip()]
+        elif isinstance(product.images, list):
+            images = product.images
     
-    product_dict = {
-        "id": product.id,
-        "farmer_id": product.farmer_id,
-        "name": product.name,
-        "category": product.category,
-        "description": product.description,
-        "quantity": product.quantity,
-        "price": product.price,
-        "discount_percentage": product.discount_percentage,
-        "location": product.location,
-        "images": images,
-        "is_approved": product.is_approved,
-        "is_listed": product.is_listed,
-        "availability": product.availability,
-        "total_ratings": product.total_ratings,
-        "average_rating": product.average_rating,
-        "created_at": product.created_at,
-        "updated_at": product.updated_at
-    }
+    # Calculate discounted price
+    discounted_price = product.price * (1 - (product.discount_percentage or 0) / 100)
     
     return ProductDetailResponse(
-        **product_dict,
+        id=product.id,
+        farmer_id=product.farmer_id,
+        name=product.name,
+        category=product.category,
+        description=product.description or "",
+        quantity=product.quantity,
+        price=product.price,
+        discount_percentage=product.discount_percentage or 0.0,
+        location=product.location,
+        images=images,
+        is_approved=product.is_approved,
+        is_listed=product.is_listed,
+        availability=product.availability,
+        total_ratings=product.total_ratings or 0,
+        average_rating=product.average_rating or 0.0,
+        created_at=product.created_at,
+        updated_at=product.updated_at,
         farmer={
-            "id": product.farmer.id,
+            "id": product.farmer_id,
             "full_name": farmer_profile.full_name,
             "profile_picture": farmer_profile.profile_picture,
             "farm_name": farmer_profile.farm_name,
             "farm_location": farmer_profile.farm_location,
             "farm_type": farmer_profile.farm_type.value if farmer_profile.farm_type else "Unknown"
         },
-        discounted_price=product.price * (1 - product.discount_percentage / 100)
-    )
-
-# NEW ENDPOINTS FOR SEARCH AND FILTERING
-
-@router.get("/products/search", response_model=ProductSearchResponse)
-async def search_products(
-    q: str = Query(..., description="Search query for products"),
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
-    db: Session = Depends(get_db)
-):
-    """Search products by name, description, farm name, or crop type"""
-    service = MarketplaceService(db)
-    skip = (page - 1) * page_size
-    
-    products = service.search_products(q, skip, page_size)
-    total_count = service.get_total_product_count()
-    
-    # Convert to public response with image handling
-    public_products = []
-    for product in products:
-        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
-        
-        # Parse images from string to list
-        images = product.images.split(',') if product.images else []
-        
-        public_products.append(ProductPublicResponse(
-            id=product.id,
-            name=product.name,
-            category=product.category,
-            description=product.description,
-            quantity=product.quantity,
-            price=product.price,
-            discount_percentage=product.discount_percentage,
-            discounted_price=product.price * (1 - product.discount_percentage / 100),
-            location=product.location,
-            images=images,
-            availability=product.availability,
-            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
-            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
-        ))
-    
-    return ProductSearchResponse(
-        products=public_products,
-        total_count=total_count,
-        page=page,
-        page_size=page_size
-    )
-
-@router.post("/products/filter", response_model=ProductSearchResponse)
-async def filter_products(
-    filters: ProductFilterRequest,
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
-    db: Session = Depends(get_db)
-):
-    """Filter products by various criteria"""
-    service = MarketplaceService(db)
-    skip = (page - 1) * page_size
-    
-    # Convert filters to dict
-    filter_dict = filters.dict(exclude_unset=True)
-    
-    products = service.filter_products(filter_dict, skip, page_size)
-    total_count = len(products)  # For simplicity, use the filtered count
-    
-    # Convert to public response
-    public_products = []
-    for product in products:
-        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
-        
-        # Parse images from string to list
-        images = product.images.split(',') if product.images else []
-        
-        public_products.append(ProductPublicResponse(
-            id=product.id,
-            name=product.name,
-            category=product.category,
-            description=product.description,
-            quantity=product.quantity,
-            price=product.price,
-            discount_percentage=product.discount_percentage,
-            discounted_price=product.price * (1 - product.discount_percentage / 100),
-            location=product.location,
-            images=images,
-            availability=product.availability,
-            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
-            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
-        ))
-    
-    return ProductSearchResponse(
-        products=public_products,
-        total_count=total_count,
-        page=page,
-        page_size=page_size
-    )
-
-@router.get("/products/{product_id}/similar", response_model=List[ProductPublicResponse])
-async def get_similar_products(
-    product_id: int,
-    limit: int = Query(6, ge=1, le=20, description="Number of similar products"),
-    db: Session = Depends(get_db)
-):
-    """Get products similar to the specified product"""
-    service = MarketplaceService(db)
-    similar_products = service.get_similar_products(product_id, limit)
-    
-    # Convert to public response
-    public_products = []
-    for product in similar_products:
-        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
-        
-        # Parse images from string to list
-        images = product.images.split(',') if product.images else []
-        
-        public_products.append(ProductPublicResponse(
-            id=product.id,
-            name=product.name,
-            category=product.category,
-            description=product.description,
-            quantity=product.quantity,
-            price=product.price,
-            discount_percentage=product.discount_percentage,
-            discounted_price=product.price * (1 - product.discount_percentage / 100),
-            location=product.location,
-            images=images,
-            availability=product.availability,
-            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
-            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
-        ))
-    
-    return public_products
-
-@router.get("/crops/{crop_type}/products", response_model=ProductSearchResponse)
-async def get_products_by_crop_type(
-    crop_type: str,
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
-    db: Session = Depends(get_db)
-):
-    """Get products filtered by specific crop type"""
-    service = MarketplaceService(db)
-    skip = (page - 1) * page_size
-    
-    products = service.get_products_by_crop_type(crop_type, skip, page_size)
-    total_count = len(products)  # For simplicity
-    
-    # Convert to public response
-    public_products = []
-    for product in products:
-        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
-        
-        # Parse images from string to list
-        images = product.images.split(',') if product.images else []
-        
-        public_products.append(ProductPublicResponse(
-            id=product.id,
-            name=product.name,
-            category=product.category,
-            description=product.description,
-            quantity=product.quantity,
-            price=product.price,
-            discount_percentage=product.discount_percentage,
-            discounted_price=product.price * (1 - product.discount_percentage / 100),
-            location=product.location,
-            images=images,
-            availability=product.availability,
-            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
-            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
-        ))
-    
-    return ProductSearchResponse(
-        products=public_products,
-        total_count=total_count,
-        page=page,
-        page_size=page_size
+        discounted_price=discounted_price
     )
 
 # Farmer product management
@@ -391,37 +254,84 @@ async def create_product(
     if current_user.category != "farmer":
         raise HTTPException(status_code=403, detail="Only farmers can create products")
     
-    # Validate product completeness
-    if not product_data.description or len(product_data.description) < 20:
-        raise HTTPException(
-            status_code=400, 
-            detail="Product description must be at least 20 characters long"
-        )
-    
-    if not product_data.images or len(product_data.images) == 0:
-        raise HTTPException(
-            status_code=400, 
-            detail="At least one product image is required"
-        )
-    
-    if product_data.price <= 0:
-        raise HTTPException(
-            status_code=400, 
-            detail="Product price must be greater than 0"
-        )
-    
     service = MarketplaceService(db)
     try:
         product = service.create_product(current_user.id, product_data)
         
         # Convert images back to list for response
-        product_dict = product.__dict__.copy()
-        if isinstance(product_dict.get('images'), str):
-            product_dict['images'] = product_dict['images'].split(',') if product_dict['images'] else []
+        images = []
+        if product.images:
+            if isinstance(product.images, str):
+                images = [img.strip() for img in product.images.split(',') if img.strip()]
+            elif isinstance(product.images, list):
+                images = product.images
         
-        return ProductResponse(**product_dict)
+        return ProductResponse(
+            id=product.id,
+            farmer_id=product.farmer_id,
+            name=product.name,
+            category=product.category,
+            description=product.description or "",
+            quantity=product.quantity,
+            price=product.price,
+            discount_percentage=product.discount_percentage or 0.0,
+            location=product.location,
+            images=images,
+            is_approved=product.is_approved,
+            is_listed=product.is_listed,
+            availability=product.availability,
+            total_ratings=product.total_ratings or 0,
+            average_rating=product.average_rating or 0.0,
+            created_at=product.created_at,
+            updated_at=product.updated_at
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"Error creating product: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/farmers/products", response_model=List[ProductResponse])
+async def get_my_products(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    if current_user.category != "farmer":
+        raise HTTPException(status_code=403, detail="Only farmers can view their products")
+    
+    service = MarketplaceService(db)
+    products = service.get_farmer_products(current_user.id)
+    
+    response_products = []
+    for product in products:
+        images = []
+        if product.images:
+            if isinstance(product.images, str):
+                images = [img.strip() for img in product.images.split(',') if img.strip()]
+            elif isinstance(product.images, list):
+                images = product.images
+        
+        response_products.append(ProductResponse(
+            id=product.id,
+            farmer_id=product.farmer_id,
+            name=product.name,
+            category=product.category,
+            description=product.description or "",
+            quantity=product.quantity,
+            price=product.price,
+            discount_percentage=product.discount_percentage or 0.0,
+            location=product.location,
+            images=images,
+            is_approved=product.is_approved,
+            is_listed=product.is_listed,
+            availability=product.availability,
+            total_ratings=product.total_ratings or 0,
+            average_rating=product.average_rating or 0.0,
+            created_at=product.created_at,
+            updated_at=product.updated_at
+        ))
+    
+    return response_products
 
 @router.put("/farmers/products/{product_id}", response_model=ProductResponse)
 async def update_product(
@@ -439,32 +349,32 @@ async def update_product(
         raise HTTPException(status_code=404, detail="Product not found")
     
     # Convert images back to list for response
-    product_dict = product.__dict__.copy()
-    if isinstance(product_dict.get('images'), str):
-        product_dict['images'] = product_dict['images'].split(',') if product_dict['images'] else []
+    images = []
+    if product.images:
+        if isinstance(product.images, str):
+            images = [img.strip() for img in product.images.split(',') if img.strip()]
+        elif isinstance(product.images, list):
+            images = product.images
     
-    return ProductResponse(**product_dict)
-
-@router.get("/farmers/products", response_model=List[ProductResponse])
-async def get_my_products(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    if current_user.category != "farmer":
-        raise HTTPException(status_code=403, detail="Only farmers can view their products")
-    
-    service = MarketplaceService(db)
-    products = service.get_farmer_products(current_user.id)
-    
-    # Convert images from string to list for each product
-    response_products = []
-    for product in products:
-        product_dict = product.__dict__.copy()
-        if isinstance(product_dict.get('images'), str):
-            product_dict['images'] = product_dict['images'].split(',') if product_dict['images'] else []
-        response_products.append(ProductResponse(**product_dict))
-    
-    return response_products
+    return ProductResponse(
+        id=product.id,
+        farmer_id=product.farmer_id,
+        name=product.name,
+        category=product.category,
+        description=product.description or "",
+        quantity=product.quantity,
+        price=product.price,
+        discount_percentage=product.discount_percentage or 0.0,
+        location=product.location,
+        images=images,
+        is_approved=product.is_approved,
+        is_listed=product.is_listed,
+        availability=product.availability,
+        total_ratings=product.total_ratings or 0,
+        average_rating=product.average_rating or 0.0,
+        created_at=product.created_at,
+        updated_at=product.updated_at
+    )
 
 @router.delete("/farmers/products/{product_id}")
 async def delete_product(
@@ -481,10 +391,11 @@ async def delete_product(
         raise HTTPException(status_code=404, detail="Product not found")
     return {"message": "Product deleted successfully"}
 
+# Additional endpoints
 @router.post("/farmers/products/{product_id}/discount")
 async def add_discount(
     product_id: int,
-    discount_percentage: float,
+    discount_percentage: float = Query(..., ge=0, le=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -495,7 +406,7 @@ async def add_discount(
     product = service.add_discount(product_id, current_user.id, discount_percentage)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product
+    return {"message": "Discount added successfully", "discount_percentage": product.discount_percentage}
 
 @router.delete("/farmers/products/{product_id}/discount")
 async def remove_discount(
@@ -510,7 +421,7 @@ async def remove_discount(
     product = service.remove_discount(product_id, current_user.id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product
+    return {"message": "Discount removed successfully"}
 
 # Order management
 @router.post("/orders", response_model=OrderResponse)
@@ -533,15 +444,23 @@ async def get_my_orders(
     service = MarketplaceService(db)
     orders = service.get_user_orders(current_user.id)
     
-    # Enhance order details
     enhanced_orders = []
     for order in orders:
-        product = order.product
-        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
+        product = service.get_product(order.product_id)
+        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first() if product else None
         
         enhanced_orders.append(OrderDetailResponse(
-            **order.__dict__,
-            product_name=product.name,
+            id=order.id,
+            product_id=order.product_id,
+            consumer_id=order.consumer_id,
+            quantity_ordered=order.quantity_ordered,
+            delivery_address=order.delivery_address,
+            total_price=order.total_price,
+            status=order.status,
+            order_number=order.order_number,
+            created_at=order.created_at,
+            updated_at=order.updated_at,
+            product_name=product.name if product else "Unknown Product",
             farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
             farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
         ))
@@ -556,12 +475,50 @@ async def create_review(
     current_user: User = Depends(get_current_active_user)
 ):
     service = MarketplaceService(db)
-    review = service.create_review(current_user.id, review_data)
-    if not review:
-        raise HTTPException(status_code=400, detail="Could not create review")
-    return review
+    try:
+        review = service.create_review(current_user.id, review_data)
+        if not review:
+            raise HTTPException(status_code=400, detail="Could not create review")
+        return review
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/products/{product_id}/reviews", response_model=List[ReviewResponse])
 async def get_product_reviews(product_id: int, db: Session = Depends(get_db)):
     service = MarketplaceService(db)
-    return service.get_product_reviews(product_id)
+    reviews = service.get_product_reviews(product_id)
+    
+    response_reviews = []
+    for review in reviews:
+        response_reviews.append(ReviewResponse(
+            id=review.id,
+            product_id=review.product_id,
+            consumer_id=review.consumer_id,
+            rating=review.rating,
+            comment=review.comment,
+            created_at=review.created_at,
+            consumer_name=f"User {review.consumer_id}"  # You might want to join with user table for actual names
+        ))
+    
+    return response_reviews
+
+# Search endpoint
+@router.get("/products/search/suggestions")
+async def search_suggestions(
+    q: str = Query(..., description="Search query"),
+    db: Session = Depends(get_db)
+):
+    """Get search suggestions"""
+    service = MarketplaceService(db)
+    products = service.search_products(q, limit=5)
+    
+    suggestions = []
+    for product in products:
+        suggestions.append({
+            "id": product.id,
+            "name": product.name,
+            "category": product.category,
+            "price": product.price
+        })
+    
+    return {"suggestions": suggestions}
