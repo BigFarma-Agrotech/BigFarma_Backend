@@ -1,14 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
-from difflib import get_close_matches
 
 from database import get_db
 from features.marketplace.models import Product
 from features.marketplace.schemas import (
     ProductCreate, ProductResponse, ProductUpdate, ProductDetailResponse,
     ProductPublicResponse, OrderCreate, OrderResponse, OrderDetailResponse,
-    ReviewCreate, ReviewResponse, ProductSearchResponse, ProductFilterRequest
+    ReviewCreate, ReviewResponse, ProductSearchResponse
 )
 from features.marketplace.service import MarketplaceService
 from features.auth.models import User
@@ -60,52 +59,19 @@ async def get_product_categories():
         ]
     }
 
-# Public endpoints
-@router.get("/products", response_model=Dict[str, Any])
+# Simplified public endpoint - returns all products with pagination only
+@router.get("/products", response_model=ProductSearchResponse)
 async def get_all_products(
     skip: int = 0, 
     limit: int = 100,
-    category: Optional[str] = Query(None, description="Filter by category"),
-    search: Optional[str] = Query(None, description="Search product names"),
-    min_price: Optional[float] = Query(None, description="Minimum price"),
-    max_price: Optional[float] = Query(None, description="Maximum price"),
-    location: Optional[str] = Query(None, description="Filter by location"),
-    availability: Optional[str] = Query(None, description="Filter by availability (in_stock, out_of_stock, all)"),
-    sort_by: Optional[str] = Query(None, description="Sort by: price_asc, price_desc, rating, newest"),
     db: Session = Depends(get_db)
 ):
     service = MarketplaceService(db)
     
-    # Use category directly (no mapping needed)
-    db_category = category
-    
-    # Get products with filters
-    products = service.get_all_products(
-        skip=skip, 
-        limit=limit,
-        category=db_category,
-        search=search,
-        min_price=min_price,
-        max_price=max_price,
-        location=location,
-        availability=availability,
-        sort_by=sort_by
-    )
+    # Get all products without any filters
+    products = service.get_all_products(skip=skip, limit=limit)
     
     print(f"DEBUG: Found {len(products)} products")
-    
-    # Check for spelling suggestions if search is provided
-    search_suggestions = []
-    if search and len(products) == 0:
-        common_products = [
-            "tomato", "tomatoes", "pepper", "peppers", "onion", "onions",
-            "rice", "beans", "corn", "maize", "yam", "potato", "potatoes",
-            "carrot", "carrots", "cabbage", "lettuce", "spinach", "cucumber",
-            "watermelon", "pineapple", "orange", "oranges", "banana", "apple",
-            "chicken", "eggs", "beef", "fish", "milk"
-        ]
-        close_matches = get_close_matches(search.lower(), common_products, n=3, cutoff=0.6)
-        search_suggestions = close_matches[:2]
     
     # Convert to public response format
     public_products = []
@@ -141,62 +107,22 @@ async def get_all_products(
         ))
     
     # Get total count for pagination
-    total_count = service.get_products_count(
-        category=db_category,
-        search=search,
-        min_price=min_price,
-        max_price=max_price,
-        location=location,
-        availability=availability
+    total_count = service.get_total_product_count()
+    
+    return ProductSearchResponse(
+        products=public_products,
+        total_count=total_count,
+        page=skip // limit + 1 if limit > 0 else 1,
+        page_size=limit,
+        has_next=(skip + limit) < total_count,
+        has_previous=skip > 0
     )
-    
-    # Prepare filter suggestions if no results
-    filter_suggestions = []
-    if len(products) == 0 and any([category, search, min_price, max_price, location]):
-        if min_price and max_price:
-            filter_suggestions.append("Try expanding your price range")
-        if location:
-            filter_suggestions.append("Try searching in nearby locations")
-        if category:
-            filter_suggestions.append("Try browsing other categories")
-    
-    # Get related products if results are empty
-    related_products = []
-    if len(products) == 0:
-        related = service.get_all_products(skip=0, limit=4, availability="all")
-        for rel_product in related:
-            farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == rel_product.farmer_id).first()
-            images = []
-            if rel_product.images:
-                if isinstance(rel_product.images, str):
-                    images = [img.strip() for img in rel_product.images.split(',') if img.strip()]
-                elif isinstance(rel_product.images, list):
-                    images = rel_product.images
-            
-            related_products.append({
-                "id": rel_product.id,
-                "name": rel_product.name,
-                "price": rel_product.price,
-                "images": images,
-                "farm_name": farmer_profile.farm_name if farmer_profile else "Unknown Farm"
-            })
-    
-    return {
-        "products": public_products,
-        "total_count": total_count,
-        "page": skip // limit + 1 if limit > 0 else 1,
-        "page_size": limit,
-        "search_suggestions": search_suggestions,
-        "filter_suggestions": filter_suggestions,
-        "related_products": related_products,
-        "filters_applied": any([category, search, min_price, max_price, location, availability])
-    }
 
 @router.get("/products/{product_id}", response_model=ProductDetailResponse)
 async def get_product_detail(product_id: int, db: Session = Depends(get_db)):
     service = MarketplaceService(db)
     product = service.get_product(product_id)
-    if not product or not product.is_approved or not product.is_listed:
+    if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     
     # Get farmer info from farmer profile

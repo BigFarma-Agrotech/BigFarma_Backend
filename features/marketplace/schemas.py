@@ -1,4 +1,4 @@
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -32,31 +32,36 @@ class ProductBase(BaseModel):
     location: str
     images: List[str]
 
-    @validator('name')
+    @field_validator('name')
+    @classmethod
     def name_must_not_be_empty(cls, v):
         if not v or not v.strip():
             raise ValueError('Product name is required')
         return v.strip()
 
-    @validator('description')
+    @field_validator('description')
+    @classmethod
     def description_must_be_min_length(cls, v):
         if not v or len(v.strip()) < 20:
             raise ValueError('Description must be at least 20 characters long')
         return v.strip()
 
-    @validator('price')
+    @field_validator('price')
+    @classmethod
     def price_must_be_positive(cls, v):
         if v <= 0:
             raise ValueError('Price must be greater than 0')
         return v
 
-    @validator('discount_percentage')
+    @field_validator('discount_percentage')
+    @classmethod
     def discount_must_be_valid(cls, v):
         if v < 0 or v > 100:
             raise ValueError('Discount percentage must be between 0 and 100')
         return v
 
-    @validator('images')
+    @field_validator('images')
+    @classmethod
     def images_must_not_be_empty(cls, v):
         if not v or len(v) == 0:
             raise ValueError('At least one image is required')
@@ -76,19 +81,23 @@ class ProductUpdate(BaseModel):
     images: Optional[List[str]] = None
     is_listed: Optional[bool] = None
 
-    @validator('name', 'description')
-    def validate_string_fields(cls, v, field):
+    @field_validator('name', 'description')
+    @classmethod
+    def validate_string_fields(cls, v, info):
         if v is not None and not v.strip():
-            raise ValueError(f'{field.name} cannot be empty')
+            field_name = info.field_name
+            raise ValueError(f'{field_name} cannot be empty')
         return v.strip() if v else v
 
-    @validator('price')
+    @field_validator('price')
+    @classmethod
     def validate_price(cls, v):
         if v is not None and v <= 0:
             raise ValueError('Price must be greater than 0')
         return v
 
-    @validator('discount_percentage')
+    @field_validator('discount_percentage')
+    @classmethod
     def validate_discount(cls, v):
         if v is not None and (v < 0 or v > 100):
             raise ValueError('Discount percentage must be between 0 and 100')
@@ -105,8 +114,7 @@ class ProductResponse(ProductBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class FarmerInfo(BaseModel):
     id: int
@@ -120,8 +128,7 @@ class ProductDetailResponse(ProductResponse):
     farmer: FarmerInfo
     discounted_price: float
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ProductPublicResponse(BaseModel):
     id: int
@@ -138,15 +145,15 @@ class ProductPublicResponse(BaseModel):
     farm_name: str
     farmer_name: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class OrderBase(BaseModel):
     product_id: int
     quantity_ordered: str
     delivery_address: str
 
-    @validator('delivery_address')
+    @field_validator('delivery_address')
+    @classmethod
     def address_must_not_be_empty(cls, v):
         if not v or not v.strip():
             raise ValueError('Delivery address is required')
@@ -164,29 +171,29 @@ class OrderResponse(OrderBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class OrderDetailResponse(OrderResponse):
     product_name: str
     farm_name: str
     farmer_name: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ReviewBase(BaseModel):
     product_id: int
     rating: int
     comment: Optional[str] = None
 
-    @validator('rating')
+    @field_validator('rating')
+    @classmethod
     def validate_rating(cls, v):
         if v < 1 or v > 5:
             raise ValueError('Rating must be between 1 and 5')
         return v
 
-    @validator('comment')
+    @field_validator('comment')
+    @classmethod
     def validate_comment(cls, v):
         if v is not None and len(v.strip()) < 10:
             raise ValueError('Comment must be at least 10 characters long')
@@ -201,18 +208,15 @@ class ReviewResponse(ReviewBase):
     created_at: datetime
     consumer_name: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ProductSearchResponse(BaseModel):
     products: List[ProductPublicResponse]
     total_count: int
     page: int
     page_size: int
-    search_suggestions: List[str] = []
-    filter_suggestions: List[str] = []
-    related_products: List[dict] = []
-    filters_applied: bool = False
+    has_next: bool
+    has_previous: bool
 
 class ProductFilterRequest(BaseModel):
     categories: Optional[List[ProductCategory]] = None
@@ -221,5 +225,4 @@ class ProductFilterRequest(BaseModel):
     locations: Optional[List[str]] = None
     availability: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

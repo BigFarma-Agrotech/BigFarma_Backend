@@ -112,115 +112,22 @@ class MarketplaceService:
     def get_all_products(
         self, 
         skip: int = 0, 
-        limit: int = 100,
-        category: Optional[str] = None,
-        search: Optional[str] = None,
-        min_price: Optional[float] = None,
-        max_price: Optional[float] = None,
-        location: Optional[str] = None,
-        availability: Optional[str] = None,
-        sort_by: Optional[str] = None
+        limit: int = 100
     ) -> List[Product]:
+        """Get all products without any filters"""
         query = self.db.query(Product).filter(
             Product.is_approved == True, 
             Product.is_listed == True
-        )
-        
-        # Handle availability filter
-        if availability == "in_stock":
-            query = query.filter(Product.availability == AvailabilityStatus.IN_STOCK)
-        elif availability == "out_of_stock":
-            query = query.filter(Product.availability == AvailabilityStatus.OUT_OF_STOCK)
-        elif availability == "all":
-            # Show all products regardless of availability
-            pass
-        else:
-            # Default: only show in stock items
-            query = query.filter(Product.availability == AvailabilityStatus.IN_STOCK)
-        
-        # Add filters
-        if category:
-            query = query.filter(Product.category == category)
-        
-        if search:
-            # Search in name and description
-            query = query.filter(
-                or_(
-                    Product.name.ilike(f"%{search}%"),
-                    Product.description.ilike(f"%{search}%")
-                )
-            )
-        
-        if min_price is not None:
-            query = query.filter(Product.price >= min_price)
-            
-        if max_price is not None:
-            query = query.filter(Product.price <= max_price)
-        
-        if location:
-            query = query.filter(Product.location.ilike(f"%{location}%"))
-        
-        # Sorting
-        if sort_by == "price_asc":
-            query = query.order_by(Product.price.asc())
-        elif sort_by == "price_desc":
-            query = query.order_by(Product.price.desc())
-        elif sort_by == "rating":
-            query = query.order_by(Product.average_rating.desc())
-        elif sort_by == "newest":
-            query = query.order_by(Product.created_at.desc())
-        else:
-            # Default: newest first
-            query = query.order_by(Product.created_at.desc())
+        ).order_by(Product.created_at.desc())
         
         return query.offset(skip).limit(limit).all()
     
-    def get_products_count(
-        self,
-        category: Optional[str] = None,
-        search: Optional[str] = None,
-        min_price: Optional[float] = None,
-        max_price: Optional[float] = None,
-        location: Optional[str] = None,
-        availability: Optional[str] = None
-    ) -> int:
-        """Get total count of products with filters"""
-        query = self.db.query(func.count(Product.id)).filter(
-            Product.is_approved == True, 
+    def get_products_count(self) -> int:
+        """Get total count of all approved and listed products"""
+        return self.db.query(func.count(Product.id)).filter(
+            Product.is_approved == True,
             Product.is_listed == True
-        )
-        
-        # Handle availability filter
-        if availability == "in_stock":
-            query = query.filter(Product.availability == AvailabilityStatus.IN_STOCK)
-        elif availability == "out_of_stock":
-            query = query.filter(Product.availability == AvailabilityStatus.OUT_OF_STOCK)
-        elif availability == "all":
-            pass
-        else:
-            query = query.filter(Product.availability == AvailabilityStatus.IN_STOCK)
-        
-        if category:
-            query = query.filter(Product.category == category)
-        
-        if search:
-            query = query.filter(
-                or_(
-                    Product.name.ilike(f"%{search}%"),
-                    Product.description.ilike(f"%{search}%")
-                )
-            )
-        
-        if min_price is not None:
-            query = query.filter(Product.price >= min_price)
-            
-        if max_price is not None:
-            query = query.filter(Product.price <= max_price)
-        
-        if location:
-            query = query.filter(Product.location.ilike(f"%{location}%"))
-        
-        return query.scalar() or 0
+        ).scalar() or 0
 
     def delete_product(self, product_id: int, farmer_id: int) -> bool:
         product = self.db.query(Product).filter(Product.id == product_id, Product.farmer_id == farmer_id).first()
