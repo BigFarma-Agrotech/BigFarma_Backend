@@ -16,12 +16,17 @@ from core.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/marketplace", tags=["Marketplace"])
 
-# Debug endpoint to check all products
-@router.get("/debug/products")
-async def debug_all_products(db: Session = Depends(get_db)):
-    """Debug endpoint to see all products in database"""
-    products = db.query(Product).all()
-    
+@router.get("/products")
+async def get_all_products(
+    db: Session = Depends(get_db),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Number of records to fetch"),
+):
+    """Get all products with pagination"""
+
+    total_products = db.query(Product).count()
+    products = db.query(Product).offset(skip).limit(limit).all()
+
     result = []
     for product in products:
         result.append({
@@ -38,9 +43,12 @@ async def debug_all_products(db: Session = Depends(get_db)):
             "images": product.images,
             "discount_percentage": product.discount_percentage
         })
-    
+
     return {
-        "total_products": len(products),
+        "total_products": total_products,
+        "skip": skip,
+        "limit": limit,
+        "returned": len(result),
         "products": result
     }
 
@@ -59,64 +67,6 @@ async def get_product_categories():
         ]
     }
 
-# Simplified public endpoint - returns all products with pagination only
-@router.get("/products", response_model=ProductSearchResponse)
-async def get_all_products(
-    skip: int = 0, 
-    limit: int = 100,
-    db: Session = Depends(get_db)
-):
-    service = MarketplaceService(db)
-    
-    # Get all products without any filters
-    products = service.get_all_products(skip=skip, limit=limit)
-    
-    print(f"DEBUG: Found {len(products)} products")
-    
-    # Convert to public response format
-    public_products = []
-    for product in products:
-        # Get farmer profile
-        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
-        
-        # Parse images
-        images = []
-        if product.images:
-            if isinstance(product.images, str):
-                images = [img.strip() for img in product.images.split(',') if img.strip()]
-            elif isinstance(product.images, list):
-                images = product.images
-        
-        # Calculate discounted price
-        discounted_price = product.price * (1 - (product.discount_percentage or 0) / 100)
-        
-        public_products.append(ProductPublicResponse(
-            id=product.id,
-            name=product.name,
-            category=product.category,
-            description=product.description or "",
-            quantity=product.quantity,
-            price=product.price,
-            discount_percentage=product.discount_percentage or 0.0,
-            discounted_price=discounted_price,
-            location=product.location,
-            images=images,
-            availability=product.availability,
-            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
-            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer"
-        ))
-    
-    # Get total count for pagination
-    total_count = service.get_total_product_count()
-    
-    return ProductSearchResponse(
-        products=public_products,
-        total_count=total_count,
-        page=skip // limit + 1 if limit > 0 else 1,
-        page_size=limit,
-        has_next=(skip + limit) < total_count,
-        has_previous=skip > 0
-    )
 
 @router.get("/products/{product_id}", response_model=ProductDetailResponse)
 async def get_product_detail(product_id: int, db: Session = Depends(get_db)):
@@ -423,7 +373,7 @@ async def get_product_reviews(product_id: int, db: Session = Depends(get_db)):
             rating=review.rating,
             comment=review.comment,
             created_at=review.created_at,
-            consumer_name=f"User {review.consumer_id}"  # You might want to join with user table for actual names
+            consumer_name=f"User {review.consumer_id}"
         ))
     
     return response_reviews
