@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Optional
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -40,9 +40,18 @@ class Settings(BaseSettings):
     APP_NAME: str = "BigFarma"
     DEBUG: bool = False
 
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def _coerce_debug(cls, value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on", "debug"}
+        return bool(value)
+
 
 @lru_cache()
-def get_settings() -> "Settings":
+def get_settings() -> Settings:
     return Settings()
 
 
