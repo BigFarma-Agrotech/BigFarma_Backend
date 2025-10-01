@@ -2,7 +2,7 @@
 Wallet services containing business logic for wallet operations
 """
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 import logging
 import json
@@ -151,7 +151,7 @@ class WalletService:
         # Update balances
         wallet.balance += amount
         wallet.ledger_balance += amount
-        wallet.last_transaction_at = datetime.utcnow()
+        wallet.last_transaction_at = datetime.now(timezone.utc)
         
         # Create transaction record
         transaction = Transaction(
@@ -220,7 +220,7 @@ class WalletService:
         # Update balances
         wallet.balance -= amount
         wallet.ledger_balance -= amount
-        wallet.last_transaction_at = datetime.utcnow()
+        wallet.last_transaction_at = datetime.now(timezone.utc)
         
         # Create transaction record
         transaction = Transaction(
@@ -449,7 +449,7 @@ class WithdrawalService:
         try:
             # Update status to processing
             withdrawal.status = WithdrawalStatus.PROCESSING
-            withdrawal.processed_at = datetime.utcnow()
+            withdrawal.processed_at = datetime.now(timezone.utc)
             self.db.commit()
             
             # Here you would integrate with payment gateway
@@ -466,7 +466,7 @@ class WithdrawalService:
             
             # Update withdrawal status
             withdrawal.status = WithdrawalStatus.COMPLETED
-            withdrawal.completed_at = datetime.utcnow()
+            withdrawal.completed_at = datetime.now(timezone.utc)
             self.db.commit()
             
             logger.info(f"Completed withdrawal {withdrawal.reference}")
@@ -474,7 +474,7 @@ class WithdrawalService:
         except Exception as e:
             logger.error(f"Failed to process withdrawal {withdrawal.reference}: {str(e)}")
             withdrawal.status = WithdrawalStatus.FAILED
-            withdrawal.failed_at = datetime.utcnow()
+            withdrawal.failed_at = datetime.now(timezone.utc)
             withdrawal.failure_reason = str(e)
             self.db.commit()
     
@@ -523,7 +523,7 @@ class WithdrawalService:
             raise ValueError(f"Cannot cancel withdrawal with status {withdrawal.status}")
         
         withdrawal.status = WithdrawalStatus.CANCELLED
-        withdrawal.failed_at = datetime.utcnow()
+        withdrawal.failed_at = datetime.now(timezone.utc)
         withdrawal.failure_reason = "Cancelled by user"
         
         self.db.commit()
@@ -622,7 +622,7 @@ class BankVerificationService:
                 # Reactivate existing account
                 existing.is_active = True
                 existing.status = BankAccountStatus.VERIFIED
-                existing.verified_at = datetime.utcnow()
+                existing.verified_at = datetime.now(timezone.utc)
                 self.db.commit()
                 return existing
         
@@ -634,7 +634,7 @@ class BankVerificationService:
             bank_code=verification_response.bank_code,
             bank_name=verification_response.bank_name,
             status=BankAccountStatus.VERIFIED,
-            verified_at=datetime.utcnow(),
+            verified_at=datetime.now(timezone.utc),
             verification_reference=generate_transaction_reference("VRF"),
             recipient_code=verification_response.recipient_code
         )

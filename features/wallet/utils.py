@@ -3,7 +3,7 @@ Utility functions for wallet operations
 """
 import secrets
 import string
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 import json
 from decimal import Decimal, ROUND_DOWN
@@ -19,7 +19,7 @@ def generate_transaction_reference(prefix: str = "TXN") -> str:
     Returns:
         Unique reference string
     """
-    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     random_suffix = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
     return f"{prefix}_{timestamp}_{random_suffix}"
 

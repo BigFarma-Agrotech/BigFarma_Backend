@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, validator, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from uuid import UUID
@@ -57,7 +57,7 @@ class BankAccountBase(BaseModel):
     account_number: str = Field(..., max_length=20, pattern="^[0-9]{10}$")
     bank_code: str = Field(..., max_length=10)
     
-    @validator('account_number')
+    @field_validator("account_number")
     def validate_account_number(cls, v):
         if not v.isdigit() or len(v) != 10:
             raise ValueError('Account number must be 10 digits')
@@ -84,7 +84,7 @@ class WithdrawalRequestCreate(WithdrawalBase):
     """Request schema for initiating withdrawal"""
     idempotency_key: Optional[str] = Field(None, max_length=255)
     
-    @validator('amount')
+    @field_validator("amount")
     def validate_minimum_amount(cls, v):
         if v < 500:
             raise ValueError('Minimum withdrawal amount is ₦500')
