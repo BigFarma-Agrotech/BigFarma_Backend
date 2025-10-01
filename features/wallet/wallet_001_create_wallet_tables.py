@@ -1,7 +1,7 @@
 """create wallet tables
 
 Revision ID: wallet_001
-Revises: 
+Revises:
 Create Date: 2024-01-01 00:00:00.000000
 
 """
@@ -20,7 +20,7 @@ def upgrade() -> None:
     # Create wallet table
     op.create_table('wallets',
         sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column('farmer_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('farmer_id', sa.Integer(), nullable=False),
         sa.Column('balance', sa.Float(), nullable=False, server_default='0.0'),
         sa.Column('ledger_balance', sa.Float(), nullable=False, server_default='0.0'),
         sa.Column('currency', sa.String(3), nullable=False, server_default='NGN'),
@@ -33,7 +33,7 @@ def upgrade() -> None:
         sa.UniqueConstraint('farmer_id')
     )
     op.create_index(op.f('ix_wallets_farmer_id'), 'wallets', ['farmer_id'], unique=True)
-    
+
     # Create bank_accounts table
     op.create_table('bank_accounts',
         sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
@@ -56,7 +56,7 @@ def upgrade() -> None:
         sa.UniqueConstraint('wallet_id', 'account_number', 'bank_code', name='_wallet_account_bank_uc')
     )
     op.create_index(op.f('ix_bank_accounts_wallet_id'), 'bank_accounts', ['wallet_id'], unique=False)
-    
+
     # Create withdrawal_requests table
     op.create_table('withdrawal_requests',
         sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
@@ -85,7 +85,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_withdrawal_requests_wallet_id'), 'withdrawal_requests', ['wallet_id'], unique=False)
     op.create_index(op.f('ix_withdrawal_requests_status'), 'withdrawal_requests', ['status'], unique=False)
-    
+
     # Create transactions table
     op.create_table('transactions',
         sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
@@ -122,17 +122,17 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_transactions_type'), table_name='transactions')
     op.drop_index(op.f('ix_transactions_wallet_id'), table_name='transactions')
     op.drop_table('transactions')
-    
+
     op.drop_index(op.f('ix_withdrawal_requests_status'), table_name='withdrawal_requests')
     op.drop_index(op.f('ix_withdrawal_requests_wallet_id'), table_name='withdrawal_requests')
     op.drop_table('withdrawal_requests')
-    
+
     op.drop_index(op.f('ix_bank_accounts_wallet_id'), table_name='bank_accounts')
     op.drop_table('bank_accounts')
-    
+
     op.drop_index(op.f('ix_wallets_farmer_id'), table_name='wallets')
     op.drop_table('wallets')
-    
+
     # Drop enums
     op.execute('DROP TYPE IF EXISTS transactiontype')
     op.execute('DROP TYPE IF EXISTS transactioncategory')

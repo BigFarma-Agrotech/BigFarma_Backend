@@ -163,16 +163,21 @@ def calculate_wallet_stats(transactions: list) -> Dict[str, float]:
     Returns:
         Dictionary with total_earnings and total_withdrawals
     """
+    def _value(field):
+        return field.value if hasattr(field, 'value') else field
+
     total_earnings = sum(
-        t.amount for t in transactions 
-        if t.type == "credit" and t.category in ["product_sale", "investment_payout"]
+        t.amount for t in transactions
+        if _value(getattr(t, 'type', None)) == 'credit'
+        and _value(getattr(t, 'category', None)) in {'product_sale', 'investment_payout'}
     )
-    
+
     total_withdrawals = sum(
-        t.amount for t in transactions 
-        if t.type == "debit" and t.category == "withdrawal"
+        t.amount for t in transactions
+        if _value(getattr(t, 'type', None)) == 'debit'
+        and _value(getattr(t, 'category', None)) == 'withdrawal'
     )
-    
+
     return {
         "total_earnings": total_earnings,
         "total_withdrawals": total_withdrawals

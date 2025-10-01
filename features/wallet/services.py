@@ -1,16 +1,17 @@
 """
 Wallet services containing business logic for wallet operations
 """
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from uuid import UUID
 import logging
+import json
 
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_, or_, desc
 
-from app.models.user import User
+from features.auth.models import User
 from .models import Wallet, Transaction, WithdrawalRequest, BankAccount, TransactionType, TransactionCategory, WithdrawalStatus, BankAccountStatus
 from .schemas import (
     WalletResponse, TransactionResponse, WithdrawalRequestCreate,
@@ -37,12 +38,12 @@ class WalletService:
     def __init__(self, db: Session):
         self.db = db
     
-    def create_wallet(self, farmer_id: UUID) -> Wallet:
+    def create_wallet(self, farmer_id: int) -> Wallet:
         """
         Create a new wallet for a farmer
         
         Args:
-            farmer_id: UUID of the farmer
+            farmer_id: ID of the farmer
         
         Returns:
             Created wallet object
@@ -66,12 +67,12 @@ class WalletService:
             # Wallet already exists
             return self.get_wallet_by_farmer_id(farmer_id)
     
-    def get_wallet_by_farmer_id(self, farmer_id: UUID) -> Wallet:
+    def get_wallet_by_farmer_id(self, farmer_id: int) -> Wallet:
         """
         Get wallet by farmer ID
         
         Args:
-            farmer_id: UUID of the farmer
+            farmer_id: ID of the farmer
         
         Returns:
             Wallet object
@@ -89,12 +90,12 @@ class WalletService:
         
         return wallet
     
-    def get_wallet_balance(self, farmer_id: UUID) -> Dict[str, Any]:
+    def get_wallet_balance(self, farmer_id: int) -> Dict[str, Any]:
         """
         Get wallet balance information
         
         Args:
-            farmer_id: UUID of the farmer
+            farmer_id: ID of the farmer
         
         Returns:
             Dictionary with balance information
@@ -135,14 +136,17 @@ class WalletService:
         Returns:
             Created transaction
         """
-        wallet = self.db.query(Wallet).filter(Wallet.id == wallet_id).with_for_update().first()
+
+        query = self.db.query(Wallet).filter(Wallet.id == wallet_id)
+        if self.db.bind and self.db.bind.dialect.name != "sqlite":
+            query = query.with_for_update()
+        wallet = query.first()
         
         if not wallet:
             raise WalletNotFoundError(str(wallet_id))
         
         # Record balances before transaction
         balance_before = wallet.balance
-        ledger_balance_before = wallet.ledger_balance
         
         # Update balances
         wallet.balance += amount
@@ -159,7 +163,7 @@ class WalletService:
             balance_before=balance_before,
             balance_after=wallet.balance,
             description=description,
-            metadata=str(metadata) if metadata else None,
+            metadata_json=json.dumps(metadata) if metadata else None,
             product_order_id=product_order_id,
             investment_id=investment_id
         )
@@ -197,7 +201,11 @@ class WalletService:
         Raises:
             InsufficientFundsError: If wallet has insufficient funds
         """
-        wallet = self.db.query(Wallet).filter(Wallet.id == wallet_id).with_for_update().first()
+
+        query = self.db.query(Wallet).filter(Wallet.id == wallet_id)
+        if self.db.bind and self.db.bind.dialect.name != "sqlite":
+            query = query.with_for_update()
+        wallet = query.first()
         
         if not wallet:
             raise WalletNotFoundError(str(wallet_id))
@@ -224,7 +232,7 @@ class WalletService:
             balance_before=balance_before,
             balance_after=wallet.balance,
             description=description,
-            metadata=str(metadata) if metadata else None,
+            metadata_json=json.dumps(metadata) if metadata else None,
             withdrawal_request_id=withdrawal_request_id
         )
         
@@ -237,14 +245,14 @@ class WalletService:
     
     def get_transaction_history(
         self,
-        farmer_id: UUID,
+        farmer_id: int,
         filter_params: TransactionFilter
     ) -> Dict[str, Any]:
         """
         Get paginated transaction history
         
         Args:
-            farmer_id: UUID of the farmer
+            farmer_id: ID of the farmer
             filter_params: Transaction filter parameters
         
         Returns:
@@ -259,11 +267,13 @@ class WalletService:
         
         # Apply filters
         if filter_params.type:
-            query = query.filter(Transaction.type == filter_params.type)
-        
+            type_value = filter_params.type.value if hasattr(filter_params.type, "value") else filter_params.type
+            query = query.filter(Transaction.type == TransactionType(type_value))
+
         if filter_params.category:
-            query = query.filter(Transaction.category == filter_params.category)
-        
+            category_value = filter_params.category.value if hasattr(filter_params.category, "value") else filter_params.category
+            query = query.filter(Transaction.category == TransactionCategory(category_value))
+
         if filter_params.start_date:
             query = query.filter(Transaction.created_at >= filter_params.start_date)
         
@@ -291,12 +301,12 @@ class WalletService:
             "has_next": has_next
         }
     
-    def get_wallet_dashboard(self, farmer_id: UUID) -> Dict[str, Any]:
+    def get_wallet_dashboard(self, farmer_id: int) -> Dict[str, Any]:
         """
         Get comprehensive wallet dashboard data
         
         Args:
-            farmer_id: UUID of the farmer
+            farmer_id: ID of the farmer
         
         Returns:
             Dictionary with wallet dashboard information
@@ -343,14 +353,14 @@ class WithdrawalService:
     
     def create_withdrawal_request(
         self,
-        farmer_id: UUID,
+        farmer_id: int,
         request_data: WithdrawalRequestCreate
     ) -> WithdrawalRequest:
         """
         Create a new withdrawal request
         
         Args:
-            farmer_id: UUID of the farmer
+            farmer_id: ID of the farmer
             request_data: Withdrawal request data
         
         Returns:
@@ -487,13 +497,13 @@ class WithdrawalService:
         
         return withdrawal
     
-    def cancel_withdrawal(self, withdrawal_id: UUID, farmer_id: UUID) -> WithdrawalRequest:
+    def cancel_withdrawal(self, withdrawal_id: UUID, farmer_id: int) -> WithdrawalRequest:
         """
         Cancel a pending withdrawal request
         
         Args:
             withdrawal_id: UUID of the withdrawal request
-            farmer_id: UUID of the farmer (for authorization)
+            farmer_id: ID of the farmer (for authorization)
         
         Returns:
             Updated withdrawal request
@@ -576,7 +586,7 @@ class BankVerificationService:
     
     def add_bank_account(
         self,
-        farmer_id: UUID,
+        farmer_id: int,
         account_data: BankAccountCreateRequest,
         verification_response: BankAccountVerifyResponse
     ) -> BankAccount:
@@ -584,7 +594,7 @@ class BankVerificationService:
         Add a verified bank account to farmer's wallet
         
         Args:
-            farmer_id: UUID of the farmer
+            farmer_id: ID of the farmer
             account_data: Bank account data
             verification_response: Verification response from gateway
         
@@ -592,7 +602,6 @@ class BankVerificationService:
             Created bank account
         """
         # Get wallet
-        from .services import WalletService
         wallet_service = WalletService(self.db)
         wallet = wallet_service.get_wallet_by_farmer_id(farmer_id)
         
@@ -644,17 +653,16 @@ class BankVerificationService:
         logger.info(f"Added bank account for farmer {farmer_id}")
         return bank_account
     
-    def get_bank_accounts(self, farmer_id: UUID) -> List[BankAccount]:
+    def get_bank_accounts(self, farmer_id: int) -> List[BankAccount]:
         """
         Get all bank accounts for a farmer
         
         Args:
-            farmer_id: UUID of the farmer
+            farmer_id: ID of the farmer
         
         Returns:
             List of bank accounts
         """
-        from .services import WalletService
         wallet_service = WalletService(self.db)
         wallet = wallet_service.get_wallet_by_farmer_id(farmer_id)
         
@@ -663,18 +671,17 @@ class BankVerificationService:
             BankAccount.is_active == True
         ).all()
     
-    def set_primary_bank_account(self, farmer_id: UUID, account_id: UUID) -> BankAccount:
+    def set_primary_bank_account(self, farmer_id: int, account_id: UUID) -> BankAccount:
         """
         Set a bank account as primary
         
         Args:
-            farmer_id: UUID of the farmer
+            farmer_id: ID of the farmer
             account_id: UUID of the bank account
         
         Returns:
             Updated bank account
         """
-        from .services import WalletService
         wallet_service = WalletService(self.db)
         wallet = wallet_service.get_wallet_by_farmer_id(farmer_id)
         

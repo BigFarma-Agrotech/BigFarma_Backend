@@ -5,9 +5,9 @@ from typing import Generator
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
-from app.db.database import get_db
-from app.models.user import User
-from app.core.deps import get_current_user
+from database import get_db
+from features.auth.models import User
+from core.dependencies import get_current_user
 from .services import WalletService, WithdrawalService, BankVerificationService
 
 

@@ -9,8 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.models.user import User
-from app.db.database import get_db
+from features.auth.models import User
+from database import get_db
 from .schemas import (
     WalletResponse, WalletDashboardResponse, TransactionResponse,
     TransactionListResponse, TransactionFilter, WithdrawalRequestCreate,
