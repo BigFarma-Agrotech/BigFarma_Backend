@@ -28,7 +28,7 @@ from .exceptions import (
     BankAccountVerificationError, DuplicateBankAccountError
 )
 
-router = APIRouter(prefix="/api/wallet", tags=["wallet"])
+router = APIRouter(prefix="/api/wallet", tags=["Wallet"])
 
 
 @router.get("/balance", response_model=dict)

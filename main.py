@@ -42,7 +42,7 @@ app.include_router(users_router, prefix="/api/v1", tags=["Users"])
 app.include_router(marketplace_router, prefix="/api/v1", tags=["Marketplace"])
 app.include_router(orders_router, prefix="/api/v1", tags=["Orders"])
 app.include_router(group_buy_router, prefix="/api/v1", tags=["Group Buy"])
-app.include_router(wallet_router, prefix="/api/v1", tags=["Wallet"])
+app.include_router(wallet_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
