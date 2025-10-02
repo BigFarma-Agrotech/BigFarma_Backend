@@ -7,7 +7,6 @@ class ProductCategory(str, Enum):
     VEGETABLES = "vegetables"
     FRUITS = "fruits"
     GRAINS = "grains"
-    PROTEINS = "proteins"
     CROP = "crop"
     LIVESTOCK = "livestock"
 
@@ -142,8 +141,15 @@ class ProductPublicResponse(BaseModel):
     location: str
     images: List[str]
     availability: AvailabilityStatus
+    total_ratings: int
+    average_rating: float
+    created_at: datetime
+    updated_at: Optional[datetime] = None
     farm_name: str
     farmer_name: str
+    farmer_id: int
+    is_approved: bool
+    is_listed: bool
 
     model_config = ConfigDict(from_attributes=True)
 

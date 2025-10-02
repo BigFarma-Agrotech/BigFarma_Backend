@@ -114,20 +114,17 @@ class MarketplaceService:
         skip: int = 0, 
         limit: int = 100
     ) -> List[Product]:
-        """Get all products without any filters"""
-        query = self.db.query(Product).filter(
-            Product.is_approved == True, 
+        """Get ALL products from the database without any filters"""
+        query = self.db.query(Product).order_by(Product.created_at.desc()).filter(
+            # Product.is_approved == True, 
             Product.is_listed == True
-        ).order_by(Product.created_at.desc())
+        )
         
         return query.offset(skip).limit(limit).all()
     
     def get_products_count(self) -> int:
-        """Get total count of all approved and listed products"""
-        return self.db.query(func.count(Product.id)).filter(
-            Product.is_approved == True,
-            Product.is_listed == True
-        ).scalar() or 0
+        """Get total count of ALL products in the database"""
+        return self.db.query(func.count(Product.id)).scalar() or 0
 
     def delete_product(self, product_id: int, farmer_id: int) -> bool:
         product = self.db.query(Product).filter(Product.id == product_id, Product.farmer_id == farmer_id).first()
@@ -158,16 +155,11 @@ class MarketplaceService:
         search_term = f"%{query}%"
         
         products = self.db.query(Product).join(FarmerProfile, Product.farmer_id == FarmerProfile.user_id).filter(
-            and_(
-                Product.is_approved == True,
-                Product.is_listed == True,
-                Product.availability == AvailabilityStatus.IN_STOCK,
-                or_(
-                    Product.name.ilike(search_term),
-                    Product.description.ilike(search_term),
-                    FarmerProfile.farm_name.ilike(search_term),
-                    FarmerProfile.farm_type.ilike(search_term)
-                )
+            or_(
+                Product.name.ilike(search_term),
+                Product.description.ilike(search_term),
+                FarmerProfile.farm_name.ilike(search_term),
+                FarmerProfile.farm_type.ilike(search_term)
             )
         ).offset(skip).limit(limit).all()
         
@@ -175,11 +167,7 @@ class MarketplaceService:
 
     def filter_products(self, filters: Dict[str, Any], skip: int = 0, limit: int = 100) -> List[Product]:
         """Filter products by various criteria"""
-        query = self.db.query(Product).filter(
-            Product.is_approved == True,
-            Product.is_listed == True,
-            Product.availability == AvailabilityStatus.IN_STOCK
-        )
+        query = self.db.query(Product)
         
         # Apply filters
         if filters.get('categories'):
@@ -207,9 +195,6 @@ class MarketplaceService:
         # Find similar products by same category
         similar_products = self.db.query(Product).filter(
             and_(
-                Product.is_approved == True,
-                Product.is_listed == True,
-                Product.availability == AvailabilityStatus.IN_STOCK,
                 Product.id != product_id,
                 Product.category == current_product.category
             )
@@ -220,9 +205,6 @@ class MarketplaceService:
     def get_products_by_crop_type(self, crop_type: str, skip: int = 0, limit: int = 100) -> List[Product]:
         """Get products filtered by specific crop type"""
         return self.db.query(Product).filter(
-            Product.is_approved == True,
-            Product.is_listed == True,
-            Product.availability == AvailabilityStatus.IN_STOCK,
             or_(
                 Product.name.ilike(f"%{crop_type}%"),
                 Product.description.ilike(f"%{crop_type}%"),
@@ -233,7 +215,7 @@ class MarketplaceService:
     # Order methods
     def create_order(self, consumer_id: int, order_data: OrderCreate) -> Optional[Order]:
         product = self.get_product(order_data.product_id)
-        if not product or product.availability != AvailabilityStatus.IN_STOCK:
+        if not product:
             return None
         
         # Calculate total price with discount
@@ -315,8 +297,5 @@ class MarketplaceService:
         return self.db.query(Review).filter(Review.product_id == product_id).order_by(Review.created_at.desc()).all()
 
     def get_total_product_count(self) -> int:
-        """Get total count of all approved and listed products"""
-        return self.db.query(func.count(Product.id)).filter(
-            Product.is_approved == True,
-            Product.is_listed == True
-        ).scalar() or 0
+        """Get total count of ALL products in the database"""
+        return self.db.query(func.count(Product.id)).scalar() or 0
