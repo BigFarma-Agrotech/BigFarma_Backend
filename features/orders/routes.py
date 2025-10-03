@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+﻿from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -7,6 +7,7 @@ from features.orders.schemas import (
     OrderDetailResponse, OrderWithDetailsResponse, OrderTimelineResponse, 
     OrderIssueResponse, OrderIssueCreate, OrderStatusUpdate, OrderFilter
 )
+from features.marketplace.schemas import OrderCreate
 from features.orders.service import OrderService
 from features.marketplace.models import Order, Product
 from features.users.models import FarmerProfile
@@ -14,6 +15,45 @@ from features.auth.models import User
 from core.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
+
+@router.post("/", response_model=OrderDetailResponse, status_code=status.HTTP_201_CREATED)
+async def create_order(
+    order_data: OrderCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Create a new order for the current consumer."""
+    if current_user.category != "consumer":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only consumers can create orders")
+
+    service = OrderService(db)
+    order = service.create_order(current_user.id, order_data)
+    if not order:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Product unavailable or order could not be created")
+
+    product = order.product
+    farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first() if product else None
+    product_images = product.images.split(',') if product and product.images else []
+
+    return OrderDetailResponse(
+        id=order.id,
+        order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
+        consumer_id=order.consumer_id,
+        product_id=order.product_id,
+        quantity_ordered=order.quantity_ordered,
+        total_price=order.total_price,
+        delivery_address=order.delivery_address,
+        contact_phone=getattr(order, 'contact_phone', None),
+        delivery_notes=getattr(order, 'delivery_notes', None),
+        status=order.status,
+        estimated_delivery_date=getattr(order, 'estimated_delivery_date', None),
+        created_at=order.created_at,
+        updated_at=order.updated_at,
+        product_name=product.name if product else "Unknown Product",
+        farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
+        farmer_name=farmer_profile.full_name if farmer_profile else "Farmer",
+        product_images=product_images,
+    )
 
 @router.get("/", response_model=List[OrderDetailResponse])
 async def get_my_orders(

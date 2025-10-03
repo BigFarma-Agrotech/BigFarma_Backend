@@ -1,15 +1,16 @@
-import logging
+﻿import logging
 from typing import List, Optional
 from sqlalchemy.orm import Session, joinedload
 from datetime import datetime, timedelta
 import uuid
 
 # Import models from marketplace (existing) and orders (new)
-from features.marketplace.models import Order, Product, OrderStatus
+from features.marketplace.models import Order, Product, OrderStatus, AvailabilityStatus
 from features.orders.models import OrderTimeline, OrderIssue, OrderTimelineStatus, IssueStatus
 from features.orders.schemas import (
     OrderIssueCreate, OrderStatusUpdate, OrderTimelineCreate, OrderFilter
 )
+from features.marketplace.schemas import OrderCreate
 from features.users.models import FarmerProfile
 from features.wallet.integration import WalletIntegration
 
@@ -18,6 +19,49 @@ logger = logging.getLogger(__name__)
 class OrderService:
     def __init__(self, db: Session):
         self.db = db
+
+    def create_order(self, consumer_id: int, order_data: OrderCreate) -> Optional[Order]:
+        """Create a new order and record initial timeline."""
+        product = self.db.query(Product).filter(Product.id == order_data.product_id).first()
+        if not product or product.availability != AvailabilityStatus.IN_STOCK:
+            logger.warning("Product %s not available for ordering", order_data.product_id)
+            return None
+
+        discounted_price = product.price * (1 - (product.discount_percentage or 0) / 100)
+
+        from datetime import datetime
+        import random
+        import string
+
+        date_part = datetime.now().strftime("%Y%m%d")
+        random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        order_number = f"BF{date_part}{random_part}"
+
+        order = Order(
+            product_id=order_data.product_id,
+            consumer_id=consumer_id,
+            quantity_ordered=order_data.quantity_ordered,
+            total_price=discounted_price,
+            delivery_address=order_data.delivery_address,
+            status=OrderStatus.PENDING,
+            order_number=order_number,
+            estimated_delivery_date=datetime.now() + timedelta(days=3),
+        )
+
+        self.db.add(order)
+        self.db.flush()
+
+        self._create_timeline_entry(
+            order.id,
+            OrderTimelineStatus.PLACED,
+            "Order Placed",
+            "Your order has been placed successfully",
+            True,
+        )
+
+        self.db.commit()
+        self.db.refresh(order)
+        return order
 
     def get_user_orders(self, user_id: int, order_filter: Optional[OrderFilter] = None) -> List[Order]:
         """Get all orders for a user with optional filtering"""
