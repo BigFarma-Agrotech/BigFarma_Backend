@@ -11,6 +11,7 @@ from features.orders.schemas import (
     OrderIssueCreate, OrderStatusUpdate, OrderTimelineCreate, OrderFilter
 )
 from features.users.models import FarmerProfile
+from features.wallet.integration import WalletIntegration
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,22 @@ class OrderService:
             return None
         
         order.status = OrderStatus.DELIVERED
-        
+
+        # Credit the farmer's wallet for the completed sale
+        product = order.product
+        if product is not None:
+            credited = WalletIntegration.credit_for_product_sale(
+                db=self.db,
+                farmer_id=product.farmer_id,
+                amount=order.total_price,
+                product_name=product.name,
+                order_id=order.id,
+            )
+            if not credited:
+                logger.warning(f"Failed to credit wallet for order {order_id}")
+        else:
+            logger.warning(f"Order {order_id} has no associated product for wallet credit")
+
         # Create timeline entry for delivery confirmation
         self._create_timeline_entry(
             order_id, 
