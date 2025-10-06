@@ -24,7 +24,8 @@ origins = [
     "http://localhost:5173",
     "http://127.0.0.1:3000",
     "https://bigfarma-frontend-w08r.onrender.com",
-    "https://big-farma-frontend-omega.vercel.app"
+    "https://big-farma-frontend-omega.vercel.app",
+    "https://big-farma-frontend.vercel.app"
 ]
 
 app.add_middleware(
