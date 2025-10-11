@@ -5,11 +5,11 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, or_, func, desc
 
-from features.group_buy.models import GroupBuy, GroupMember, GroupTransaction, GroupNotification, GroupJoinRequest, GroupStatus, GroupMemberStatus
+from features.group_buy.models import GroupBuy, GroupMember, GroupTransaction, GroupNotification, GroupJoinRequest, GroupStatus, GroupMemberStatus, MessageType
 from features.group_buy.schemas import (
     GroupBuyCreate, GroupBuyUpdate, GroupMemberCreate, GroupMemberJoin,
     GroupTransactionCreate, GroupNotificationCreate, GroupProgressResponse,
-    GroupBuyCreateValidator, GroupDiscoveryRequest, GroupPublicResponse,
+    GroupDiscoveryRequest, GroupPublicResponse,
     GroupJoinRequest as GroupJoinRequestSchema, GroupJoinResponse,
     GroupPricingRequest, GroupPricingResponse, GroupJoinValidationResponse
 )
@@ -22,12 +22,25 @@ class GroupBuyService:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_group(self, creator_id: int, group_data: GroupBuyCreate) -> GroupBuy:
+    async def create_group(self, creator_id: int, group_data: GroupBuyCreate) -> GroupBuy:
         """Create a new group buy"""
         try:
+            # Resolve product ID if product_name was provided instead
+            product_id = group_data.product_id
+            if not product_id and group_data.product_name:
+                product = self.db.query(Product).filter(
+                    Product.name.ilike(f"%{group_data.product_name}%"),
+                    Product.availability == AvailabilityStatus.IN_STOCK,
+                    Product.is_listed == True
+                ).first()
+                if product:
+                    product_id = product.id
+                else:
+                    raise ValueError(f"Product '{group_data.product_name}' not found or not available")
+            
             # Validate product exists and is available
             product = self.db.query(Product).filter(
-                Product.id == group_data.product_id,
+                Product.id == product_id,
                 Product.availability == AvailabilityStatus.IN_STOCK,
                 Product.is_listed == True
             ).first()
@@ -35,8 +48,16 @@ class GroupBuyService:
             if not product:
                 raise ValueError("Product not found or not available")
             
-            # Validate quantity unit
-            quantity_unit = GroupBuyCreateValidator.validate_quantity_unit(group_data.quantity_unit)
+            # Auto-calculate individual_contribution if not provided
+            individual_contribution = group_data.individual_contribution
+            if not individual_contribution:
+                # Calculate as product price divided by estimated 10 members
+                estimated_members = 10
+                total_cost = product.price * group_data.target_quantity_numeric
+                individual_contribution = total_cost / estimated_members
+            
+            # Validate quantity unit (already validated in schema)
+            quantity_unit = group_data.quantity_unit
             
             # Generate unique shareable link
             shareable_link = self._generate_shareable_link()
@@ -46,14 +67,17 @@ class GroupBuyService:
                 group_name=group_data.group_name,
                 group_description=group_data.group_description,
                 group_location=group_data.group_location,
-                product_id=group_data.product_id,
+                product_id=product_id,
                 target_quantity=group_data.target_quantity,
                 target_quantity_numeric=group_data.target_quantity_numeric,
                 quantity_unit=quantity_unit,
                 creator_id=creator_id,
-                individual_contribution=group_data.individual_contribution,
+                individual_contribution=individual_contribution,
                 shareable_link=shareable_link,
-                status=GroupStatus.ACTIVE
+                status=GroupStatus.ACTIVE,
+                is_public=group_data.is_public,
+                max_members=group_data.max_members,
+                deadline=group_data.deadline
             )
             
             self.db.add(group)
@@ -65,13 +89,23 @@ class GroupBuyService:
                 user_id=creator_id,
                 status=GroupMemberStatus.ACTIVE,
                 joined_at=datetime.utcnow(),
-                contribution_amount=group_data.individual_contribution,
+                contribution_amount=individual_contribution,
                 quantity_committed=group_data.target_quantity_numeric / 10  # Creator commits to 10% initially
             )
             
             self.db.add(creator_member)
             self.db.commit()
             self.db.refresh(group)
+            
+            # Create group chat
+            try:
+                from features.group_buy.chat_service import ChatService
+                chat_service = ChatService(self.db)
+                await chat_service.create_group_chat(group.id)
+                logger.info(f"Chat created for group {group.id}")
+            except Exception as chat_error:
+                logger.warning(f"Failed to create chat for group {group.id}: {chat_error}")
+                # Don't fail the entire group creation if chat creation fails
             
             # Send notification to creator
             self._send_notification(
@@ -90,7 +124,7 @@ class GroupBuyService:
             logger.error(f"Error creating group: {str(e)}")
             raise
 
-    def join_group(self, user_id: int, join_data: GroupMemberJoin) -> GroupMember:
+    async def join_group(self, user_id: int, join_data: GroupMemberJoin) -> GroupMember:
         """Join an existing group"""
         try:
             # Check if group exists and is active
@@ -134,6 +168,22 @@ class GroupBuyService:
             
             # Update group progress
             self._update_group_progress(join_data.group_id)
+            
+            # Add user to group chat
+            try:
+                from features.group_buy.chat_service import ChatService
+                chat_service = ChatService(self.db)
+                
+                # Get or create chat for the group
+                chat = group.chat
+                if not chat:
+                    chat = await chat_service.create_group_chat(join_data.group_id)
+                
+                # Add member to chat
+                await chat_service.add_member_to_chat(chat.id, user_id)
+                logger.info(f"User {user_id} added to chat for group {join_data.group_id}")
+            except Exception as chat_error:
+                logger.warning(f"Failed to add user {user_id} to chat for group {join_data.group_id}: {chat_error}")
             
             # Send notifications
             self._send_notification(
@@ -272,7 +322,7 @@ class GroupBuyService:
             estimated_completion_date=estimated_completion_date
         )
 
-    def add_contribution(self, group_id: int, user_id: int, amount: float, payment_method: str = "wallet") -> GroupTransaction:
+    async def add_contribution(self, group_id: int, user_id: int, amount: float, payment_method: str = "wallet") -> GroupTransaction:
         """Add a contribution to the group wallet"""
         try:
             # Check if user is an active member
@@ -311,7 +361,7 @@ class GroupBuyService:
             self._update_group_progress(group_id)
             
             # Check if group should be locked for purchase
-            self._check_and_trigger_purchase(group_id)
+            await self._check_and_trigger_purchase(group_id)
             
             logger.info(f"Contribution of {amount} added to group {group_id} by user {user_id}")
             return transaction
@@ -365,7 +415,7 @@ class GroupBuyService:
                 message=f"Your group has reached {progress_percentage:.1f}% of the target quantity!"
             )
 
-    def _check_and_trigger_purchase(self, group_id: int):
+    async def _check_and_trigger_purchase(self, group_id: int):
         """Check if group has reached target and trigger auto-purchase"""
         group = self.db.query(GroupBuy).filter(GroupBuy.id == group_id).first()
         if not group:
@@ -378,6 +428,24 @@ class GroupBuyService:
             group.locked_at = datetime.utcnow()
             
             self.db.commit()
+            
+            # Close group chat and send completion message
+            try:
+                from features.group_buy.chat_service import ChatService
+                chat_service = ChatService(self.db)
+                if group.chat:
+                    # Send completion message to chat
+                    await chat_service.send_system_message(
+                        chat_id=group.chat.id,
+                        message="🎉 Congratulations! The group has reached its target quantity and the purchase has been automatically triggered! The chat will now be closed.",
+                        message_type=MessageType.COMPLETION_NOTICE
+                    )
+                    
+                    # Close the chat
+                    await chat_service.close_chat(group.chat.id, "Group purchase completed")
+                    logger.info(f"Chat closed for completed group {group_id}")
+            except Exception as chat_error:
+                logger.warning(f"Failed to close chat for group {group_id}: {chat_error}")
             
             # Notify all members
             self._notify_group_members(
