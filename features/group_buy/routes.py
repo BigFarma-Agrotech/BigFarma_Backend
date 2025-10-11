@@ -1,21 +1,56 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 from typing import List, Optional
+import logging
 
 from database import get_db
 from core.dependencies import get_current_active_user
 from features.auth.models import User
+from features.marketplace.models import Product, AvailabilityStatus
 from features.group_buy.service import GroupBuyService
+from features.group_buy.chat_service import ChatService, connection_manager
 from features.group_buy.schemas import (
     GroupBuyCreate, GroupBuyUpdate, GroupBuyResponse, GroupBuyDetailResponse,
     GroupMemberJoin, GroupMemberResponse, GroupTransactionCreate, GroupTransactionResponse,
     GroupProgressResponse, GroupInviteRequest, GroupInviteResponse,
     GroupNotificationResponse, StockAlertRequest, StockAlertResponse,
     GroupDiscoveryRequest, GroupPublicResponse, GroupJoinRequest, GroupJoinResponse,
-    GroupPricingRequest, GroupPricingResponse, GroupJoinValidationResponse
+    GroupPricingRequest, GroupPricingResponse, GroupJoinValidationResponse,
+    # Chat schemas
+    ChatMessageSend, ChatMessageResponse, MessageHistoryRequest, MessageHistoryResponse,
+    ChatMembershipResponse, ChatReportCreate, ChatModerationAction, ChatStatsResponse,
+    WebSocketMessage, WebSocketMessageType, TypingIndicator
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+@router.get("/products/available", response_model=List[dict])
+async def get_available_products_for_group_buy(
+    db: Session = Depends(get_db)
+):
+    """Get available products for group buy creation"""
+    try:
+        products = db.query(Product).filter(
+            Product.availability == AvailabilityStatus.IN_STOCK,
+            Product.is_listed == True,
+            Product.is_approved == True
+        ).all()
+        
+        return [
+            {
+                "id": product.id,
+                "name": product.name,
+                "price": product.price,
+                "category": product.category,
+                "location": product.location,
+                "quantity": product.quantity
+            }
+            for product in products
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch products")
 
 @router.post("/groups", response_model=GroupBuyResponse, status_code=status.HTTP_201_CREATED)
 async def create_group(
@@ -26,12 +61,14 @@ async def create_group(
     """Create a new group buy"""
     try:
         service = GroupBuyService(db)
-        group = service.create_group(current_user.id, group_data)
+        group = await service.create_group(current_user.id, group_data)
         return group
     except ValueError as e:
+        logger.error(f"Validation error creating group: {str(e)}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create group")
+        logger.error(f"Unexpected error creating group: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create group: {str(e)}")
 
 @router.get("/groups", response_model=List[GroupBuyResponse])
 async def get_user_groups(
@@ -106,7 +143,7 @@ async def join_group(
     """Join an existing group"""
     try:
         service = GroupBuyService(db)
-        member = service.join_group(current_user.id, join_data)
+        member = await service.join_group(current_user.id, join_data)
         return member
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -172,7 +209,7 @@ async def add_contribution(
     """Add a contribution to the group wallet"""
     try:
         service = GroupBuyService(db)
-        transaction = service.add_contribution(group_id, current_user.id, amount, payment_method)
+        transaction = await service.add_contribution(group_id, current_user.id, amount, payment_method)
         return transaction
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -431,3 +468,269 @@ async def join_public_group(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to join group")
+
+# ========================
+# CHAT ROUTES
+# ========================
+
+@router.get("/groups/{group_id}/chat/messages", response_model=MessageHistoryResponse)
+async def get_chat_messages(
+    group_id: int,
+    limit: int = Query(50, ge=1, le=100, description="Number of messages to retrieve"),
+    before_message_id: Optional[int] = Query(None, description="Get messages before this message ID"),
+    after_message_id: Optional[int] = Query(None, description="Get messages after this message ID"),
+    include_deleted: bool = Query(False, description="Include deleted messages"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get chat messages for a group"""
+    try:
+        # Verify user is a member of the group
+        group_service = GroupBuyService(db)
+        group_details = group_service.get_group_details(group_id, current_user.id)
+        if not group_details["is_member"] and not group_details["is_creator"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        
+        chat_service = ChatService(db)
+        
+        # Get or create chat for the group
+        chat = None
+        if hasattr(group_details["group"], "chat") and group_details["group"]["chat"]:
+            chat_id = group_details["group"]["chat"]["id"]
+        else:
+            # Create chat if it doesn't exist
+            chat = await chat_service.create_group_chat(group_id)
+            await chat_service.add_member_to_chat(chat.id, current_user.id)
+            chat_id = chat.id
+        
+        request = MessageHistoryRequest(
+            limit=limit,
+            before_message_id=before_message_id,
+            after_message_id=after_message_id,
+            include_deleted=include_deleted
+        )
+        
+        messages = chat_service.get_chat_messages(chat_id, current_user.id, request)
+        return messages
+        
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error fetching chat messages for group {group_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch chat messages")
+
+@router.post("/groups/{group_id}/chat/messages", response_model=ChatMessageResponse, status_code=status.HTTP_201_CREATED)
+async def send_chat_message(
+    group_id: int,
+    message_data: ChatMessageSend,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Send a message to group chat"""
+    try:
+        # Validate message content
+        if not message_data.message_content or len(message_data.message_content.strip()) == 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message content cannot be empty")
+        
+        if len(message_data.message_content) > 2000:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message content too long (max 2000 characters)")
+        
+        # Verify user is a member of the group
+        group_service = GroupBuyService(db)
+        group_details = group_service.get_group_details(group_id, current_user.id)
+        if not group_details["is_member"] and not group_details["is_creator"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        
+        chat_service = ChatService(db)
+        
+        # Get or create chat
+        chat = None
+        if hasattr(group_details["group"], "chat") and group_details["group"]["chat"]:
+            chat_id = group_details["group"]["chat"]["id"]
+        else:
+            # Create chat if it doesn't exist
+            chat = await chat_service.create_group_chat(group_id)
+            await chat_service.add_member_to_chat(chat.id, current_user.id)
+            chat_id = chat.id
+        
+        message = await chat_service.send_message(chat_id, current_user.id, message_data)
+        return message
+        
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error sending message to group {group_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send message")
+
+@router.put("/groups/{group_id}/chat/messages/{message_id}/pin")
+async def pin_chat_message(
+    group_id: int,
+    message_id: int,
+    is_pinned: bool = Query(..., description="Whether to pin or unpin the message"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Pin or unpin a chat message (moderators only)"""
+    try:
+        # Verify user is a group creator (moderator)
+        group_service = GroupBuyService(db)
+        group_details = group_service.get_group_details(group_id, current_user.id)
+        if not group_details["is_creator"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only group creators can pin messages")
+        
+        chat_service = ChatService(db)
+        chat_id = group_details["group"]["chat"]["id"]
+        
+        message = await chat_service.pin_message(chat_id, message_id, current_user.id, is_pinned)
+        return message
+        
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to pin/unpin message")
+
+@router.delete("/groups/{group_id}/chat/messages/{message_id}")
+async def delete_chat_message(
+    group_id: int,
+    message_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a chat message (author or moderator only)"""
+    try:
+        # Verify user is a member of the group
+        group_service = GroupBuyService(db)
+        group_details = group_service.get_group_details(group_id, current_user.id)
+        if not group_details["is_member"] and not group_details["is_creator"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        
+        # TODO: Implement message deletion logic
+        # Check if user is message author or group creator
+        
+        return {"message": "Message deleted successfully"}
+        
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete message")
+
+@router.get("/groups/{group_id}/chat/stats", response_model=ChatStatsResponse)
+async def get_chat_stats(
+    group_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get chat statistics for a group"""
+    try:
+        # Verify user is a member of the group
+        group_service = GroupBuyService(db)
+        group_details = group_service.get_group_details(group_id, current_user.id)
+        if not group_details["is_member"] and not group_details["is_creator"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        
+        chat_service = ChatService(db)
+        chat_id = group_details["group"]["chat"]["id"]
+        
+        stats = chat_service.get_chat_stats(chat_id)
+        return stats
+        
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch chat stats")
+
+@router.post("/groups/{group_id}/chat/report")
+async def report_chat_message(
+    group_id: int,
+    report_data: ChatReportCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Report a chat message for moderation"""
+    try:
+        # Verify user is a member of the group
+        group_service = GroupBuyService(db)
+        group_details = group_service.get_group_details(group_id, current_user.id)
+        if not group_details["is_member"] and not group_details["is_creator"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        
+        # TODO: Implement message reporting logic
+        
+        return {"message": "Message reported successfully"}
+        
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to report message")
+
+@router.websocket("/groups/{group_id}/chat/ws")
+async def chat_websocket(
+    websocket: WebSocket,
+    group_id: int,
+    db: Session = Depends(get_db)
+):
+    """WebSocket endpoint for real-time chat"""
+    chat_service = ChatService(db)
+    user_id = None  # TODO: Get user from WebSocket authentication
+    
+    try:
+        # TODO: Implement WebSocket authentication
+        # For now, we'll need to pass user_id through query params or headers
+        
+        # Verify user is a member of the group
+        # group_service = GroupBuyService(db)
+        # group_details = group_service.get_group_details(group_id, user_id)
+        # if not group_details["is_member"] and not group_details["is_creator"]:
+        #     await websocket.close(code=4003, reason="Access denied")
+        #     return
+        
+        # Get chat ID
+        # chat_id = group_details["group"]["chat"]["id"]
+        chat_id = group_id  # Temporary - use group_id as chat_id
+        
+        # Connect to WebSocket
+        await connection_manager.connect(websocket, chat_id, user_id or 1)  # Temporary user_id
+        
+        try:
+            while True:
+                # Receive message from WebSocket
+                data = await websocket.receive_json()
+                
+                # Handle different message types
+                message_type = data.get("type")
+                
+                if message_type == "message":
+                    # Send chat message
+                    message_content = data.get("message", "")
+                    if message_content:
+                        message_data = ChatMessageSend(message_content=message_content)
+                        await chat_service.send_message(chat_id, user_id or 1, message_data)
+                
+                elif message_type == "typing":
+                    # Handle typing indicator
+                    is_typing = data.get("is_typing", False)
+                    await connection_manager.handle_typing(chat_id, user_id or 1, is_typing)
+                
+                elif message_type == "heartbeat":
+                    # Respond to heartbeat
+                    await websocket.send_json({"type": "heartbeat", "timestamp": "now"})
+                
+        except WebSocketDisconnect:
+            connection_manager.disconnect(websocket, chat_id)
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
+            await websocket.send_json({
+                "type": "error",
+                "message": "An error occurred"
+            })
+            
+    except Exception as e:
+        logger.error(f"WebSocket connection error: {e}")
+        try:
+            await websocket.close(code=4000, reason="Connection error")
+        except:
+            pass

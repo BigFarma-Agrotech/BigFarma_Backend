@@ -60,6 +60,7 @@ class GroupBuy(Base):
     creator = relationship("User", foreign_keys=[creator_id])
     members = relationship("GroupMember", back_populates="group", cascade="all, delete-orphan")
     transactions = relationship("GroupTransaction", back_populates="group", cascade="all, delete-orphan")
+    chat = relationship("GroupChat", back_populates="group", uselist=False, cascade="all, delete-orphan")
 
 class GroupMember(Base):
     __tablename__ = "group_members"
@@ -161,3 +162,128 @@ class GroupNotification(Base):
     # Relationships
     group = relationship("GroupBuy")
     user = relationship("User")
+
+class MessageType(str, enum.Enum):
+    TEXT = "text"
+    SYSTEM = "system"
+    ANNOUNCEMENT = "announcement"
+    JOIN_NOTIFICATION = "join_notification"
+    LEAVE_NOTIFICATION = "leave_notification"
+    PROGRESS_UPDATE = "progress_update"
+    COMPLETION_NOTICE = "completion_notice"
+
+class GroupChat(Base):
+    __tablename__ = "group_chats"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(Integer, ForeignKey("group_buys.id"), unique=True, nullable=False)
+    
+    # Chat status and lifecycle
+    is_active = Column(Boolean, default=True)
+    is_read_only = Column(Boolean, default=False)  # Set to True when group completes/cancels
+    
+    # Moderation settings
+    allow_member_invite = Column(Boolean, default=True)
+    auto_close_on_completion = Column(Boolean, default=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    last_message_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Relationships
+    group = relationship("GroupBuy", back_populates="chat")
+    messages = relationship("ChatMessage", back_populates="chat", cascade="all, delete-orphan")
+    memberships = relationship("ChatMembership", back_populates="chat", cascade="all, delete-orphan")
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    chat_id = Column(Integer, ForeignKey("group_chats.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Nullable for system messages
+    
+    # Message content
+    message_content = Column(Text, nullable=False)
+    message_type = Column(Enum(MessageType), default=MessageType.TEXT)
+    
+    # Message metadata
+    is_pinned = Column(Boolean, default=False)
+    is_deleted = Column(Boolean, default=False)
+    is_edited = Column(Boolean, default=False)
+    pin_order = Column(Integer, nullable=True)  # Order of pinned messages
+    
+    # Threading and replies
+    reply_to_message_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=True)
+    thread_count = Column(Integer, default=0)  # Number of replies to this message
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    edited_at = Column(DateTime(timezone=True), nullable=True)
+    pinned_at = Column(DateTime(timezone=True), nullable=True)
+    pinned_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    
+    # Relationships
+    chat = relationship("GroupChat", back_populates="messages")
+    user = relationship("User", foreign_keys=[user_id])
+    pinned_by = relationship("User", foreign_keys=[pinned_by_user_id])
+    reply_to = relationship("ChatMessage", remote_side=[id], backref="replies")
+
+class ChatMembership(Base):
+    __tablename__ = "chat_memberships"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    chat_id = Column(Integer, ForeignKey("group_chats.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    # Membership status
+    is_active = Column(Boolean, default=True)
+    is_muted = Column(Boolean, default=False)
+    is_moderator = Column(Boolean, default=False)  # Group creator is auto-moderator
+    
+    # Read tracking
+    last_read_message_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=True)
+    last_read_at = Column(DateTime(timezone=True), nullable=True)
+    unread_count = Column(Integer, default=0)
+    
+    # Membership timeline
+    joined_at = Column(DateTime(timezone=True), server_default=func.now())
+    left_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Notifications preferences
+    notify_on_mention = Column(Boolean, default=True)
+    notify_on_all_messages = Column(Boolean, default=True)
+    
+    # Relationships
+    chat = relationship("GroupChat", back_populates="memberships")
+    user = relationship("User")
+    last_read_message = relationship("ChatMessage", foreign_keys=[last_read_message_id])
+
+class ChatReport(Base):
+    __tablename__ = "chat_reports"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    chat_id = Column(Integer, ForeignKey("group_chats.id"), nullable=False)
+    message_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=False)
+    reported_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    reported_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    # Report details
+    report_reason = Column(String, nullable=False)  # spam, abuse, inappropriate, etc.
+    report_description = Column(Text, nullable=True)
+    
+    # Report status
+    status = Column(String, default="pending")  # pending, reviewed, resolved, dismissed
+    reviewed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    resolution_notes = Column(Text, nullable=True)
+    
+    # Timestamps
+    reported_at = Column(DateTime(timezone=True), server_default=func.now())
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Relationships
+    chat = relationship("GroupChat")
+    message = relationship("ChatMessage")
+    reported_by = relationship("User", foreign_keys=[reported_by_user_id])
+    reported_user = relationship("User", foreign_keys=[reported_user_id])
+    reviewed_by = relationship("User", foreign_keys=[reviewed_by_user_id])

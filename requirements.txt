@@ -28,6 +28,10 @@ aiofiles
 # Logging
 structlog
 
+# Real-time features (WebSocket support included in FastAPI)
+# python-socketio  # Optional: for more advanced WebSocket features
+# redis  # Optional: for scaling WebSocket connections across multiple servers
+
 # Development and testing
 pytest
 pytest-asyncio
