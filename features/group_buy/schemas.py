@@ -1,7 +1,8 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, model_validator
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
+import re
 
 # Enums for schemas
 class GroupStatusEnum(str, Enum):
@@ -27,10 +28,57 @@ class GroupBuyBase(BaseModel):
     quantity_unit: str = Field(..., description="Unit of measurement (e.g., 'kg', 'pieces', 'goats')")
     individual_contribution: float = Field(..., gt=0, description="Amount each member needs to contribute")
 
-class GroupBuyCreate(GroupBuyBase):
+class GroupBuyCreate(BaseModel):
+    group_name: str = Field(..., min_length=3, max_length=100, description="Name of the group")
+    group_description: Optional[str] = Field(None, max_length=500, description="Description of the group")
+    group_location: str = Field(..., min_length=3, max_length=200, description="Location where the group will meet")
+    
+    # More flexible product specification
+    product_id: Optional[int] = Field(None, description="ID of the product to purchase")
+    product_name: Optional[str] = Field(None, description="Name of the product (if product_id not provided)")
+    
+    # More flexible quantity specification
+    target_quantity: str = Field(..., description="Target quantity to purchase (e.g., '100kg', '50 pieces')")
+    target_quantity_numeric: Optional[float] = Field(None, gt=0, description="Numeric value of target quantity (auto-calculated if not provided)")
+    quantity_unit: Optional[str] = Field(None, description="Unit of measurement (auto-extracted if not provided)")
+    
+    # Make individual_contribution optional with reasonable default calculation
+    individual_contribution: Optional[float] = Field(None, gt=0, description="Amount each member needs to contribute (auto-calculated if not provided)")
+    
     is_public: bool = Field(True, description="Whether group is publicly discoverable")
     max_members: Optional[int] = Field(None, gt=0, description="Optional member limit")
     deadline: Optional[datetime] = Field(None, description="Optional group deadline")
+    
+    @model_validator(mode='after')
+    def validate_all_fields(self):
+        """Validate and auto-calculate all fields after initial processing"""
+        # Check product specification
+        if not self.product_id and not self.product_name:
+            raise ValueError("Either product_id or product_name must be provided")
+        
+        # Auto-calculate target_quantity_numeric if not provided
+        if self.target_quantity_numeric is None:
+            try:
+                self.target_quantity_numeric = GroupBuyCreateValidator.validate_target_quantity(self.target_quantity, "")
+            except:
+                raise ValueError("Could not extract numeric value from target_quantity. Please provide target_quantity_numeric explicitly.")
+        
+        # Auto-extract quantity_unit if not provided
+        if self.quantity_unit is None:
+            # Try to extract unit from target_quantity string
+            unit_match = re.search(r'([a-zA-Z]+)', self.target_quantity.lower())
+            if unit_match:
+                extracted_unit = unit_match.group(1)
+                try:
+                    self.quantity_unit = GroupBuyCreateValidator.validate_quantity_unit(extracted_unit)
+                except:
+                    # Default to 'pieces' if extraction fails
+                    self.quantity_unit = 'pieces'
+            else:
+                # Default to 'pieces' if no unit found
+                self.quantity_unit = 'pieces'
+        
+        return self
 
 class GroupBuyUpdate(BaseModel):
     group_name: Optional[str] = Field(None, min_length=3, max_length=100)
@@ -281,3 +329,215 @@ class GroupBuyCreateValidator:
         if not match:
             raise ValueError("Invalid target quantity format. Must contain a number.")
         return float(match.group(1))
+
+# ========================
+# CHAT SCHEMAS
+# ========================
+
+class MessageTypeEnum(str, Enum):
+    TEXT = "text"
+    SYSTEM = "system"
+    ANNOUNCEMENT = "announcement"
+    JOIN_NOTIFICATION = "join_notification"
+    LEAVE_NOTIFICATION = "leave_notification"
+    PROGRESS_UPDATE = "progress_update"
+    COMPLETION_NOTICE = "completion_notice"
+
+# Chat base schemas
+class GroupChatBase(BaseModel):
+    group_id: int
+    is_active: bool = True
+    is_read_only: bool = False
+    allow_member_invite: bool = True
+    auto_close_on_completion: bool = True
+
+class GroupChatCreate(GroupChatBase):
+    pass
+
+class GroupChatResponse(GroupChatBase):
+    id: int
+    created_at: datetime
+    closed_at: Optional[datetime]
+    last_message_at: Optional[datetime]
+    
+    class Config:
+        from_attributes = True
+
+class GroupChatDetailResponse(GroupChatResponse):
+    group: dict  # Group details
+    members_count: int
+    unread_count: int
+    pinned_messages: List[dict]
+    recent_messages: List[dict]
+
+# Message schemas
+class ChatMessageBase(BaseModel):
+    message_content: str = Field(..., min_length=1, max_length=2000, description="Message content")
+    message_type: MessageTypeEnum = MessageTypeEnum.TEXT
+    reply_to_message_id: Optional[int] = None
+
+class ChatMessageCreate(ChatMessageBase):
+    chat_id: int
+
+class ChatMessageSend(BaseModel):
+    message_content: str = Field(..., min_length=1, max_length=2000)
+    reply_to_message_id: Optional[int] = None
+
+class ChatMessageResponse(ChatMessageBase):
+    id: int
+    chat_id: int
+    user_id: Optional[int]
+    is_pinned: bool
+    is_deleted: bool
+    is_edited: bool
+    pin_order: Optional[int]
+    thread_count: int
+    created_at: datetime
+    edited_at: Optional[datetime]
+    pinned_at: Optional[datetime]
+    pinned_by_user_id: Optional[int]
+    
+    # User details
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    
+    # Reply details
+    reply_to: Optional[dict] = None
+    
+    class Config:
+        from_attributes = True
+
+class ChatMessageUpdate(BaseModel):
+    message_content: str = Field(..., min_length=1, max_length=2000)
+
+class ChatMessagePin(BaseModel):
+    is_pinned: bool
+    pin_order: Optional[int] = None
+
+# Chat membership schemas
+class ChatMembershipBase(BaseModel):
+    chat_id: int
+    user_id: int
+    is_active: bool = True
+    is_muted: bool = False
+    is_moderator: bool = False
+
+class ChatMembershipCreate(ChatMembershipBase):
+    pass
+
+class ChatMembershipResponse(ChatMembershipBase):
+    id: int
+    last_read_message_id: Optional[int]
+    last_read_at: Optional[datetime]
+    unread_count: int
+    joined_at: datetime
+    left_at: Optional[datetime]
+    notify_on_mention: bool
+    notify_on_all_messages: bool
+    
+    # User details
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+class ChatMembershipUpdate(BaseModel):
+    is_muted: Optional[bool] = None
+    notify_on_mention: Optional[bool] = None
+    notify_on_all_messages: Optional[bool] = None
+
+# WebSocket message schemas
+class WebSocketMessageType(str, Enum):
+    MESSAGE = "message"
+    TYPING = "typing"
+    USER_JOINED = "user_joined"
+    USER_LEFT = "user_left"
+    MESSAGE_PINNED = "message_pinned"
+    MESSAGE_UNPINNED = "message_unpinned"
+    MESSAGE_DELETED = "message_deleted"
+    CHAT_CLOSED = "chat_closed"
+    ERROR = "error"
+    HEARTBEAT = "heartbeat"
+
+class WebSocketMessage(BaseModel):
+    type: WebSocketMessageType
+    data: dict
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    user_id: Optional[int] = None
+    chat_id: Optional[int] = None
+
+class TypingIndicator(BaseModel):
+    user_id: int
+    user_name: str
+    is_typing: bool
+
+# Message history and pagination
+class MessageHistoryRequest(BaseModel):
+    limit: int = Field(50, ge=1, le=100, description="Number of messages to retrieve")
+    before_message_id: Optional[int] = Field(None, description="Get messages before this message ID")
+    after_message_id: Optional[int] = Field(None, description="Get messages after this message ID")
+    include_deleted: bool = Field(False, description="Include deleted messages")
+    message_type: Optional[MessageTypeEnum] = Field(None, description="Filter by message type")
+
+class MessageHistoryResponse(BaseModel):
+    messages: List[ChatMessageResponse]
+    has_more: bool
+    total_count: int
+    next_cursor: Optional[int] = None
+    prev_cursor: Optional[int] = None
+
+# Chat moderation schemas
+class ChatReportCreate(BaseModel):
+    message_id: int
+    report_reason: str = Field(..., description="Reason for reporting")
+    report_description: Optional[str] = Field(None, max_length=500, description="Detailed description")
+
+class ChatReportResponse(BaseModel):
+    id: int
+    chat_id: int
+    message_id: int
+    reported_by_user_id: int
+    reported_user_id: int
+    report_reason: str
+    report_description: Optional[str]
+    status: str
+    reported_at: datetime
+    reviewed_at: Optional[datetime]
+    
+    class Config:
+        from_attributes = True
+
+class ChatModerationAction(BaseModel):
+    action: str = Field(..., description="Moderation action: mute, unmute, remove, warn")
+    user_id: int = Field(..., description="Target user ID")
+    duration_minutes: Optional[int] = Field(None, description="Duration for temporary actions")
+    reason: Optional[str] = Field(None, max_length=500, description="Reason for action")
+
+# Chat analytics and stats
+class ChatStatsResponse(BaseModel):
+    chat_id: int
+    total_messages: int
+    active_members: int
+    messages_today: int
+    most_active_user: Optional[dict] = None
+    average_response_time: Optional[float] = None
+    pinned_messages_count: int
+
+# Bulk operations
+class BulkMessageOperation(BaseModel):
+    message_ids: List[int] = Field(..., min_items=1, max_items=50)
+    operation: str = Field(..., description="Operation: delete, pin, unpin")
+
+class ChatSearchRequest(BaseModel):
+    query: str = Field(..., min_length=2, max_length=100, description="Search query")
+    message_type: Optional[MessageTypeEnum] = None
+    user_id: Optional[int] = None
+    from_date: Optional[datetime] = None
+    to_date: Optional[datetime] = None
+    limit: int = Field(20, ge=1, le=50)
+
+class ChatSearchResponse(BaseModel):
+    messages: List[ChatMessageResponse]
+    total_results: int
+    search_time_ms: float

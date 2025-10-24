@@ -34,6 +34,7 @@ class User(Base):
     otp_codes = relationship("OTPCode", back_populates="user", cascade="all, delete-orphan")
     farmer_profile = relationship("FarmerProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
     consumer_profile = relationship("ConsumerProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    wallet = relationship("Wallet", back_populates="farmer", uselist=False)
     
     # marketplace relationships
     products = relationship("Product", back_populates="farmer", cascade="all, delete-orphan")

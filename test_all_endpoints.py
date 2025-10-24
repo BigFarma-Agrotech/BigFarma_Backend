@@ -94,12 +94,14 @@ class BigFarmaAPITester:
         # Test user registration
         test_users = [
             {
-                "email": f"test_farmer_{int(time.time())}@test.com",
+                # "email": f"test_farmer_{int(time.time())}@test.com",
+                "email": f"test_farmer@test.com",
                 "password": "Test123!@#",
                 "category": "farmer"
             },
             {
-                "email": f"test_consumer_{int(time.time())}@test.com",
+                # "email": f"test_consumer_{int(time.time())}@test.com",
+                "email": f"test_consumer@test.com",
                 "password": "Test123!@#",
                 "category": "consumer"
             }

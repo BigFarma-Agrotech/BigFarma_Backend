@@ -1,4 +1,4 @@
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import datetime
 from features.marketplace.models import OrderStatus
@@ -60,7 +60,7 @@ class OrderWithDetailsResponse(OrderDetailResponse):
 class OrderIssueCreate(BaseModel):
     issue_description: str
     
-    @validator('issue_description')
+    @field_validator('issue_description')
     def validate_description(cls, v):
         if not v or len(v.strip()) < 10:
             raise ValueError('Issue description must be at least 10 characters long')
