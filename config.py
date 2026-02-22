@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     SMTP_USER: Optional[str] = None
     SMTP_PASSWORD: Optional[str] = None
     SMTP_USE_TLS: bool = True
-    APP_DOMAIN: str = "https://igarmaackend-ng-harry4460-3iiwyioe.leapcell.dev"
+    APP_DOMAIN: str = "https://jellyfish-app-2-i2mfu.ondigitalocean.app/"
     
     # SMS Configuration (Twilio example)
     TWILIO_ACCOUNT_SID: Optional[str] = None
