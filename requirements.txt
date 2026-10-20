@@ -5,6 +5,7 @@ uvicorn
 # Database
 sqlalchemy
 psycopg2-binary
+psycopg
 alembic
 
 # Authentication and security
