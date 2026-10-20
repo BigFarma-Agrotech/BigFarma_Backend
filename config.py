@@ -20,11 +20,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # Brevo SMTP
-    BREVO_SMTP_HOST: Optional[str] = None
-    BREVO_SMTP_PORT: Optional[int] = 587
-    BREVO_SMTP_USER: Optional[str] = None
-    BREVO_SMTP_KEY: Optional[str] = None
+    # Brevo Transactional Emails API
+    BREVO_API_KEY: Optional[str] = None
     MAIL_FROM: Optional[str] = None
     APP_DOMAIN: str = "https://jellyfish-app-2-i2mfu.ondigitalocean.app/"
 

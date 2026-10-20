@@ -1,7 +1,6 @@
 import logging
-import aiosmtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+import httpx
+from email.utils import parseaddr
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 import datetime
@@ -9,6 +8,8 @@ import datetime
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+BREVO_SEND_URL = "https://api.brevo.com/v3/smtp/email"
 
 class EmailService:
     def __init__(self):
@@ -105,45 +106,38 @@ class EmailService:
             """
     
     async def send_email(self, to_email: str, subject: str, html_content: str) -> bool:
-        """Send email via Brevo SMTP"""
-        if not settings.BREVO_SMTP_USER or not settings.BREVO_SMTP_KEY or not settings.MAIL_FROM:
-            logger.warning("Brevo SMTP credentials not configured.")
+        """Send email via Brevo's Transactional Emails API"""
+        if not settings.BREVO_API_KEY or not settings.MAIL_FROM:
+            logger.warning("Brevo API credentials not configured.")
             return False
 
-        smtp = None
+        sender_name, sender_email = parseaddr(settings.MAIL_FROM)
+        payload = {
+            "sender": {"name": sender_name or settings.APP_NAME, "email": sender_email},
+            "to": [{"email": to_email}],
+            "subject": subject,
+            "htmlContent": html_content,
+        }
+        headers = {
+            "accept": "application/json",
+            "api-key": settings.BREVO_API_KEY,
+            "content-type": "application/json",
+        }
+
         try:
-            msg = MIMEMultipart()
-            msg['From'] = settings.MAIL_FROM
-            msg['To'] = to_email
-            msg['Subject'] = subject
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.post(BREVO_SEND_URL, json=payload, headers=headers)
 
-            msg.attach(MIMEText(html_content, 'html'))
+            if response.status_code in (200, 201):
+                logger.info(f"Email sent successfully to {to_email}")
+                return True
 
-            smtp = aiosmtplib.SMTP(
-                hostname=settings.BREVO_SMTP_HOST,
-                port=settings.BREVO_SMTP_PORT,
-            )
-
-            # STARTTLS upgrade for port 587; passing use_tls=True to the
-            # constructor instead would attempt implicit TLS and break with
-            # "WRONG_VERSION_NUMBER".
-            await smtp.connect(start_tls=True)
-
-            await smtp.login(settings.BREVO_SMTP_USER, settings.BREVO_SMTP_KEY)
-            await smtp.send_message(msg)
-
-            logger.info(f"Email sent successfully to {to_email}")
-            return True
+            logger.error(f"Error sending email to {to_email}: {response.status_code} {response.text}")
+            return False
 
         except Exception as e:
             logger.error(f"Error sending email to {to_email}: {str(e)}")
             return False
-        finally:
-            if smtp:
-                try:
-                    await smtp.quit()
-                except Exception as e:
-                    logger.warning(f"Error closing SMTP connection: {e}")
     
     async def send_welcome_email(self, to_email: str, user_name: str) -> bool:
         """Send welcome email after successful account creation"""
