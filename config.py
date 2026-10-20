@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Optional[str] = None
     SMTP_USE_TLS: bool = True
     APP_DOMAIN: str = "https://jellyfish-app-2-i2mfu.ondigitalocean.app/"
+
+    # Brevo Transactional Emails API
+    BREVO_API_KEY: Optional[str] = None
+    BREVO_SENDER_EMAIL: Optional[str] = None
+    BREVO_SENDER_NAME: str = "BigFarma"
     
     # SMS Configuration (Twilio example)
     TWILIO_ACCOUNT_SID: Optional[str] = None
