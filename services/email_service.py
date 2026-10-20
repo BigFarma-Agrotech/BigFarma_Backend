@@ -119,20 +119,18 @@ class EmailService:
             
             msg.attach(MIMEText(html_content, 'html'))
             
-            # Use TLS setting properly
+            # use_tls=True means "connect via implicit TLS" (e.g. port 465),
+            # which breaks STARTTLS ports like 587 with a
+            # "WRONG_VERSION_NUMBER" error. start_tls=True on connect() does
+            # the correct plaintext-then-upgrade handshake for port 587.
             use_tls = getattr(settings, 'SMTP_USE_TLS', True)
             smtp = aiosmtplib.SMTP(
-                hostname=settings.SMTP_HOST, 
+                hostname=settings.SMTP_HOST,
                 port=settings.SMTP_PORT,
-                use_tls=use_tls
             )
-            
-            await smtp.connect()
-            
-            # Only attempt STARTTLS if not already using TLS and it's requested
-            if use_tls and not smtp.is_connected_with_tls:
-                await smtp.starttls()
-            
+
+            await smtp.connect(start_tls=use_tls)
+
             await smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             await smtp.send_message(msg)
             
