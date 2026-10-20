@@ -8,6 +8,7 @@ venv/
 ENV/
 .env
 BigFarma_Backend.env
+*.db
 
 GROUP_BUY_IMPLEMENTATION.md
 ADVANCED_GROUP_BUY_FEATURES.md

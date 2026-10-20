@@ -5,7 +5,7 @@ uvicorn
 # Database
 sqlalchemy
 psycopg2-binary
-psycopg[binary]
+alembic
 
 # Authentication and security
 python-jose[cryptography]
@@ -43,9 +43,8 @@ isort
 flake8
 
 # Type checking
-mypy 
+mypy
 
-passlib
 bcrypt
 
 aiosmtplib

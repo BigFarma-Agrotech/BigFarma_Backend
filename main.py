@@ -2,7 +2,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 from datetime import datetime
-from database import Base, engine
 from features.auth.routes import router as auth_router
 from features.users.routes import router as users_router
 from features.marketplace.routes import router as marketplace_router
@@ -14,9 +13,6 @@ from config import settings
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# Create tables
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG)
 origins = [
