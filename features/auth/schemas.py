@@ -15,8 +15,22 @@ class UserBase(BaseModel):
             raise ValueError('Either email or phone number must be provided')
         return v
 
+MAX_PASSWORD_BYTES = 72
+
+
+def _validate_password_length(v: str) -> str:
+    if len(v.encode('utf-8')) > MAX_PASSWORD_BYTES:
+        raise ValueError(f'Password must be at most {MAX_PASSWORD_BYTES} bytes long')
+    return v
+
+
 class UserCreate(UserBase):
     password: str
+
+    @field_validator('password')
+    @classmethod
+    def validate_password_length(cls, v):
+        return _validate_password_length(v)
 
 class UserLogin(BaseModel):
     login: str
@@ -74,6 +88,11 @@ class PasswordReset(BaseModel):
     phone: Optional[str] = None
     medium: OTPMedium
     new_password: str
+
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password_length(cls, v):
+        return _validate_password_length(v)
 
     @field_validator('medium')
     @classmethod
