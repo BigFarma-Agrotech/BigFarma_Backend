@@ -20,19 +20,14 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # SMTP Configuration
-    SMTP_HOST: Optional[str] = None
-    SMTP_PORT: Optional[int] = 587
-    SMTP_USER: Optional[str] = None
-    SMTP_PASSWORD: Optional[str] = None
-    SMTP_USE_TLS: bool = True
+    # Brevo SMTP
+    BREVO_SMTP_HOST: Optional[str] = None
+    BREVO_SMTP_PORT: Optional[int] = 587
+    BREVO_SMTP_USER: Optional[str] = None
+    BREVO_SMTP_KEY: Optional[str] = None
+    MAIL_FROM: Optional[str] = None
     APP_DOMAIN: str = "https://jellyfish-app-2-i2mfu.ondigitalocean.app/"
 
-    # Brevo Transactional Emails API
-    BREVO_API_KEY: Optional[str] = None
-    BREVO_SENDER_EMAIL: Optional[str] = None
-    BREVO_SENDER_NAME: str = "BigFarma"
-    
     # SMS Configuration (Twilio example)
     TWILIO_ACCOUNT_SID: Optional[str] = None
     TWILIO_AUTH_TOKEN: Optional[str] = None
