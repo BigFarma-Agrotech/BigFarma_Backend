@@ -1,19 +1,19 @@
 # FastAPI and ASGI server
 fastapi
-uvicorn[standard]
+uvicorn
 
 # Database
 sqlalchemy
 psycopg2-binary
+psycopg[binary]
 
 # Authentication and security
 python-jose[cryptography]
-passlib[bcrypt]
+passlib
 python-multipart
 
 # Data validation
 pydantic
-pydantic[email]
 pydantic-settings
 
 # Environment and configuration
@@ -46,7 +46,7 @@ flake8
 mypy 
 
 passlib
-bcrypt==3.2.2
+bcrypt
 
 aiosmtplib
 twilio
