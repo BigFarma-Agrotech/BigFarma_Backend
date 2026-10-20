@@ -46,7 +46,7 @@ flake8
 # Type checking
 mypy
 
-bcrypt
+bcrypt==4.0.1
 
 aiosmtplib
 twilio
