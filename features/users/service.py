@@ -16,6 +16,13 @@ class UserService:
         """Get user with profile information."""
         return self.user_repo.get_with_profile(user_id)
 
+    def _ensure_contact_available(self, user_id: int, email: Optional[str] = None, phone: Optional[str] = None):
+        """Raise ValueError if another account already uses this email or phone (both columns are unique)."""
+        if email and self.db.query(User).filter(User.email == email, User.id != user_id).first():
+            raise ValueError("This email is already used by another account")
+        if phone and self.db.query(User).filter(User.phone_number == phone, User.id != user_id).first():
+            raise ValueError("This phone number is already used by another account")
+
     def create_farmer_profile(self, user_id: int, profile_data: FarmerProfileCreate) -> FarmerProfile:
         """Create a farmer profile for a user and update user contact info if needed."""
         user = self.db.query(User).filter(User.id == user_id).first()
@@ -40,12 +47,14 @@ class UserService:
         
         if phone and not user.phone_number:
             update_user_data['phone_number'] = phone
-        
+
+        self._ensure_contact_available(user_id, update_user_data.get('email'), update_user_data.get('phone_number'))
+
         if update_user_data:
             for key, value in update_user_data.items():
                 setattr(user, key, value)
-        
-        farmer_profile = FarmerProfile(**profile_dict, user_id=user_id)
+
+        farmer_profile =FarmerProfile(**profile_dict, user_id=user_id)
         self.db.add(farmer_profile)
         
         user.profile_setup = True
@@ -68,11 +77,12 @@ class UserService:
         
         user = self.db.query(User).filter(User.id == user_id).first()
         if user:
+            self._ensure_contact_available(user_id, email, phone)
             if email and email != user.email:
                 user.email = email
             if phone and phone != user.phone_number:
                 user.phone_number = phone
-        
+
         for field, value in update_data.items():
             setattr(farmer_profile, field, value)
         
@@ -124,11 +134,13 @@ class UserService:
         
         if phone and not user.phone_number:
             update_user_data['phone_number'] = phone
-        
+
+        self._ensure_contact_available(user_id, update_user_data.get('email'), update_user_data.get('phone_number'))
+
         if update_user_data:
             for key, value in update_user_data.items():
                 setattr(user, key, value)
-        
+
         # Validate required fields
         required_fields = ['first_name', 'last_name', 'address']
         for field in required_fields:
@@ -164,11 +176,12 @@ class UserService:
         
         user = self.db.query(User).filter(User.id == user_id).first()
         if user:
+            self._ensure_contact_available(user_id, email, phone)
             if email and email != user.email:
                 user.email = email
             if phone and phone != user.phone_number:
                 user.phone_number = phone
-        
+
         if 'crop_preferences' in update_data and update_data['crop_preferences']:
             update_data['crop_preferences'] = ','.join(update_data['crop_preferences'])
         

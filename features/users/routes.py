@@ -70,7 +70,10 @@ async def update_farmer_profile(
         raise HTTPException(status_code=400, detail="User is not a farmer")
     
     user_service = UserService(db)
-    updated_profile = user_service.update_farmer_profile(current_user.id, profile)
+    try:
+        updated_profile = user_service.update_farmer_profile(current_user.id, profile)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     
     if not updated_profile:
         raise HTTPException(status_code=404, detail="Farmer profile not found")
@@ -136,7 +139,10 @@ async def update_consumer_profile(
         raise HTTPException(status_code=400, detail="User is not a consumer")
     
     user_service = UserService(db)
-    updated_profile = user_service.update_consumer_profile(current_user.id, profile)
+    try:
+        updated_profile = user_service.update_consumer_profile(current_user.id, profile)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     
     if not updated_profile:
         raise HTTPException(status_code=404, detail="Consumer profile not found")

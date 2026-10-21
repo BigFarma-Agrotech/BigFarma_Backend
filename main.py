@@ -1,7 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import logging
-from datetime import datetime
 from features.auth.routes import router as auth_router
 from features.users.routes import router as users_router
 from features.marketplace.routes import router as marketplace_router
@@ -14,7 +14,14 @@ from config import settings
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG)
+# debug is deliberately not passed: FastAPI's debug mode sends full Python
+# tracebacks (file paths, SQL, parameters) to clients. Errors are logged below.
+app = FastAPI(title=settings.APP_NAME)
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 origins = [
     "http://localhost",
     "http://localhost:3000",
@@ -44,14 +51,6 @@ app.include_router(wallet_router, prefix="/api/v1")
 @app.get("/")
 async def root():
     return {"message": "BigFarma API", "version": "1.0.0"}
-
-@app.get("/debug/time")
-async def debug_time():
-    return {
-        "server_time": datetime.now(),
-        "utc_time": datetime.utcnow(),
-        "database_url": settings.DATABASE_URL
-    }
 
 @app.get("/health")
 async def health_check():

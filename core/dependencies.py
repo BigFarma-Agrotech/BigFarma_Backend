@@ -17,12 +17,19 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
     )
     try:
         payload = decode_token(token)
-        user_id: int = payload.get("sub")
+        sub = payload.get("sub")
         token_type: str = payload.get("type")
-        
-        if user_id is None or token_type != "access":
+
+        if sub is None or token_type != "access":
             raise credentials_exception
-            
+
+        # JWT "sub" is a string; users.id is an integer column, and Postgres
+        # won't compare integer = varchar
+        try:
+            user_id = int(sub)
+        except (TypeError, ValueError):
+            raise credentials_exception
+
         user = db.query(User).filter(User.id == user_id).first()
         if user is None or not user.is_active:
             raise credentials_exception
