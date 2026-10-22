@@ -12,6 +12,7 @@ from features.orders.service import OrderService
 from features.marketplace.models import Order, Product
 from features.users.models import FarmerProfile
 from features.auth.models import User
+from utils.helpers import split_images
 from core.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
@@ -33,7 +34,7 @@ async def create_order(
 
     product = order.product
     farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first() if product else None
-    product_images = product.images.split(',') if product and product.images else []
+    product_images = split_images(product.images) if product else []
 
     return OrderDetailResponse(
         id=order.id,
@@ -79,7 +80,7 @@ async def get_my_orders(
         farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
         
         # Parse images
-        product_images = product.images.split(',') if product.images else []
+        product_images = split_images(product.images)
         
         order_response = OrderDetailResponse(
             id=order.id,
@@ -128,7 +129,7 @@ async def get_order_details(
     farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
     
     # Parse images
-    product_images = product.images.split(',') if product.images else []
+    product_images = split_images(product.images)
     
     # Transform timeline
     timeline_responses = [
@@ -222,7 +223,7 @@ async def confirm_delivery(
     # Get additional details for response
     product = order.product
     farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
-    product_images = product.images.split(',') if product.images else []
+    product_images = split_images(product.images)
     
     return OrderDetailResponse(
         id=order.id,
@@ -313,23 +314,24 @@ async def update_order_status(
     current_user: User = Depends(get_current_active_user)
 ):
     """Update order status (for farmers/admin)"""
-    # TODO: Add proper authorization check for farmers
     if current_user.category not in ["farmer", "admin"]:
         raise HTTPException(
-            status_code=403, 
+            status_code=403,
             detail="Only farmers and administrators can update order status"
         )
-    
+
     service = OrderService(db)
-    
-    order = service.update_order_status(order_id, status_update)
+
+    # Farmers may only update orders for their own products
+    farmer_id = current_user.id if current_user.category == "farmer" else None
+    order = service.update_order_status(order_id, status_update, farmer_id=farmer_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     
     # Get additional details for response
     product = order.product
     farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
-    product_images = product.images.split(',') if product.images else []
+    product_images = split_images(product.images)
     
     return OrderDetailResponse(
         id=order.id,

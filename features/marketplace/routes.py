@@ -13,6 +13,7 @@ from features.marketplace.service import MarketplaceService
 from features.auth.models import User
 from features.users.models import FarmerProfile
 from core.dependencies import get_current_active_user
+from utils.helpers import split_images
 
 router = APIRouter(prefix="/marketplace", tags=["Marketplace"])
 
@@ -39,7 +40,7 @@ async def get_all_products(
         images = []
         if product.images:
             if isinstance(product.images, str):
-                images = [img.strip() for img in product.images.split(',') if img.strip()]
+                images = split_images(product.images)
             elif isinstance(product.images, list):
                 images = product.images
         
@@ -113,7 +114,7 @@ async def get_product_detail(product_id: int, db: Session = Depends(get_db)):
     images = []
     if product.images:
         if isinstance(product.images, str):
-            images = [img.strip() for img in product.images.split(',') if img.strip()]
+            images = split_images(product.images)
         elif isinstance(product.images, list):
             images = product.images
     
@@ -167,7 +168,7 @@ async def create_product(
         images = []
         if product.images:
             if isinstance(product.images, str):
-                images = [img.strip() for img in product.images.split(',') if img.strip()]
+                images = split_images(product.images)
             elif isinstance(product.images, list):
                 images = product.images
         
@@ -212,7 +213,7 @@ async def get_my_products(
         images = []
         if product.images:
             if isinstance(product.images, str):
-                images = [img.strip() for img in product.images.split(',') if img.strip()]
+                images = split_images(product.images)
             elif isinstance(product.images, list):
                 images = product.images
         
@@ -257,7 +258,7 @@ async def update_product(
     images = []
     if product.images:
         if isinstance(product.images, str):
-            images = [img.strip() for img in product.images.split(',') if img.strip()]
+            images = split_images(product.images)
         elif isinstance(product.images, list):
             images = product.images
     

@@ -1,5 +1,6 @@
 ﻿import logging
 from typing import List, Optional
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 from datetime import datetime, timedelta
 import uuid
@@ -63,10 +64,16 @@ class OrderService:
         self.db.refresh(order)
         return order
 
+    def _visible_orders(self, user_id: int):
+        """Orders the user placed (consumer) plus orders for products they sell (farmer)."""
+        return self.db.query(Order).join(Product, Order.product_id == Product.id).filter(
+            or_(Order.consumer_id == user_id, Product.farmer_id == user_id)
+        )
+
     def get_user_orders(self, user_id: int, order_filter: Optional[OrderFilter] = None) -> List[Order]:
         """Get all orders for a user with optional filtering"""
-        query = self.db.query(Order).filter(Order.consumer_id == user_id)
-        
+        query = self._visible_orders(user_id)
+
         # Apply filters
         if order_filter:
             if order_filter.status:
@@ -78,7 +85,8 @@ class OrderService:
             if order_filter.search:
                 # Search by order number, product name, or farm name
                 search_term = f"%{order_filter.search}%"
-                query = query.join(Product).join(FarmerProfile, Product.farmer_id == FarmerProfile.user_id).filter(
+                # Product is already joined by _visible_orders
+                query = query.outerjoin(FarmerProfile, Product.farmer_id == FarmerProfile.user_id).filter(
                     Order.order_number.ilike(search_term) |
                     Product.name.ilike(search_term) |
                     FarmerProfile.farm_name.ilike(search_term)
@@ -88,36 +96,31 @@ class OrderService:
 
     def get_order_details(self, order_id: int, user_id: int) -> Optional[Order]:
         """Get detailed order information with all related data"""
-        order = self.db.query(Order).options(
+        order = self._visible_orders(user_id).options(
             joinedload(Order.product),
             joinedload(Order.consumer)
-        ).filter(
-            Order.id == order_id,
-            Order.consumer_id == user_id
-        ).first()
-        
+        ).filter(Order.id == order_id).first()
+
         return order
 
     def get_order_timeline(self, order_id: int, user_id: int) -> List[OrderTimeline]:
         """Get timeline for a specific order"""
-        # First verify the user owns the order
-        order = self.db.query(Order).filter(
-            Order.id == order_id,
-            Order.consumer_id == user_id
-        ).first()
-        
+        # First verify the user bought or sold the order
+        order = self._visible_orders(user_id).filter(Order.id == order_id).first()
+
         if not order:
             return []
-        
+
         return self.db.query(OrderTimeline).filter(
             OrderTimeline.order_id == order_id
         ).order_by(OrderTimeline.created_at.asc()).all()
 
     def get_order_issues(self, order_id: int, user_id: int) -> List[OrderIssue]:
         """Get all issues reported for an order"""
-        return self.db.query(OrderIssue).join(Order).filter(
-            Order.id == order_id,
-            Order.consumer_id == user_id
+        if not self._visible_orders(user_id).filter(Order.id == order_id).first():
+            return []
+        return self.db.query(OrderIssue).filter(
+            OrderIssue.order_id == order_id
         ).order_by(OrderIssue.created_at.desc()).all()
 
     def report_delivery_issue(self, order_id: int, user_id: int, issue_data: OrderIssueCreate) -> Optional[OrderIssue]:
@@ -205,9 +208,16 @@ class OrderService:
         logger.info(f"Order {order_id} delivery confirmed by user {user_id}")
         return order
 
-    def update_order_status(self, order_id: int, status_update: OrderStatusUpdate) -> Optional[Order]:
-        """Update order status (typically used by farmers/admin)"""
-        order = self.db.query(Order).filter(Order.id == order_id).first()
+    def update_order_status(self, order_id: int, status_update: OrderStatusUpdate, farmer_id: Optional[int] = None) -> Optional[Order]:
+        """Update order status (typically used by farmers/admin).
+
+        When farmer_id is given, only orders for that farmer's own products can
+        be changed; any other order is reported as not found.
+        """
+        query = self.db.query(Order).join(Product, Order.product_id == Product.id).filter(Order.id == order_id)
+        if farmer_id is not None:
+            query = query.filter(Product.farmer_id == farmer_id)
+        order = query.first()
         if not order:
             return None
         
@@ -314,5 +324,17 @@ class OrderService:
         
         if stats["total_orders"] > 0:
             stats["average_order_value"] = stats["total_spent"] / stats["total_orders"]
-        
+
+        # Seller side: orders placed for this user's products (farmers)
+        sales = self.db.query(Order).join(Product, Order.product_id == Product.id).filter(
+            Product.farmer_id == user_id
+        ).all()
+        stats["sales"] = {
+            "total_orders": len(sales),
+            "pending_orders": len([o for o in sales if o.status == OrderStatus.PENDING]),
+            "delivered_orders": len([o for o in sales if o.status == OrderStatus.DELIVERED]),
+            "cancelled_orders": len([o for o in sales if o.status == OrderStatus.CANCELLED]),
+            "total_revenue": sum([o.total_price for o in sales if o.status != OrderStatus.CANCELLED]),
+        }
+
         return stats

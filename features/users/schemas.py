@@ -47,6 +47,8 @@ class FarmerProfileUpdate(BaseModel):
     full_name: Optional[str] = Field(None, min_length=2, max_length=100)
     home_address: Optional[str] = Field(None, min_length=5, max_length=500)
     profile_picture: Optional[str] = None
+    # Uploaded in the identity verification step of profile setup
+    id_document: Optional[str] = None
     farm_name: Optional[str] = None
     farm_type: Optional[FarmType] = None
     farm_image: Optional[str] = None
