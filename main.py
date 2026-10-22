@@ -1,7 +1,11 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import asyncio
 import logging
+import os
+import httpx
 from features.auth.routes import router as auth_router
 from features.users.routes import router as users_router
 from features.marketplace.routes import router as marketplace_router
@@ -14,9 +18,37 @@ from config import settings
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+KEEP_ALIVE_INTERVAL_SECONDS = 13 * 60
+
+
+async def keep_alive(url: str):
+    """Ping our own public URL so Render's free tier never sees 15 min of idle time."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        while True:
+            await asyncio.sleep(KEEP_ALIVE_INTERVAL_SECONDS)
+            try:
+                response = await client.get(url)
+                logger.info("Keep-alive ping %s -> %s", url, response.status_code)
+            except Exception as exc:
+                logger.warning("Keep-alive ping to %s failed: %s", url, exc)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Render sets RENDER_EXTERNAL_URL automatically; it must be the public URL
+    # (not localhost) so the request goes through Render's proxy and counts as traffic.
+    base_url = os.getenv("RENDER_EXTERNAL_URL")
+    task = None
+    if base_url:
+        task = asyncio.create_task(keep_alive(f"{base_url.rstrip('/')}/health"))
+    yield
+    if task:
+        task.cancel()
+
+
 # debug is deliberately not passed: FastAPI's debug mode sends full Python
 # tracebacks (file paths, SQL, parameters) to clients. Errors are logged below.
-app = FastAPI(title=settings.APP_NAME)
+app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
