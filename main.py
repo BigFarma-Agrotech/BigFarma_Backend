@@ -12,6 +12,7 @@ from features.marketplace.routes import router as marketplace_router
 from features.orders.routes import router as orders_router
 from features.group_buy.routes import router as group_buy_router
 from features.wallet.routes import router as wallet_router
+from features.notifications.routes import router as notifications_router
 from config import settings
 
 # Configure logging
@@ -79,6 +80,7 @@ app.include_router(marketplace_router, prefix="/api/v1", tags=["Marketplace"])
 app.include_router(orders_router, prefix="/api/v1", tags=["Orders"])
 app.include_router(group_buy_router, prefix="/api/v1", tags=["Group Buy"])
 app.include_router(wallet_router, prefix="/api/v1")
+app.include_router(notifications_router, prefix="/api/v1", tags=["Notifications"])
 
 @app.get("/")
 async def root():

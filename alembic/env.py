@@ -13,6 +13,7 @@ from features.marketplace import models as marketplace_models  # noqa: F401
 from features.orders import models as orders_models  # noqa: F401
 from features.group_buy import models as group_buy_models  # noqa: F401
 from features.wallet import models as wallet_models  # noqa: F401
+from features.notifications import models as notifications_models  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, status, Query
+﻿from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -9,6 +9,7 @@ from features.orders.schemas import (
 )
 from features.marketplace.schemas import OrderCreate
 from features.orders.service import OrderService
+from features.notifications.service import NotificationService
 from features.marketplace.models import Order, Product
 from features.users.models import FarmerProfile
 from features.auth.models import User
@@ -20,6 +21,7 @@ router = APIRouter(prefix="/orders", tags=["Orders"])
 @router.post("/", response_model=OrderDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_order(
     order_data: OrderCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -31,6 +33,8 @@ async def create_order(
     order = service.create_order(current_user.id, order_data)
     if not order:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Product unavailable or order could not be created")
+
+    NotificationService(db).notify_order_placed(current_user, order, background_tasks)
 
     product = order.product
     farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first() if product else None

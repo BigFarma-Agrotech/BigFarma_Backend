@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 
@@ -10,6 +10,7 @@ from features.marketplace.schemas import (
     ReviewCreate, ReviewResponse, ProductSearchResponse
 )
 from features.marketplace.service import MarketplaceService
+from features.notifications.service import NotificationService
 from features.auth.models import User
 from features.users.models import FarmerProfile
 from core.dependencies import get_current_active_user
@@ -333,6 +334,7 @@ async def remove_discount(
 @router.post("/orders", response_model=OrderResponse)
 async def create_order(
     order_data: OrderCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -340,6 +342,7 @@ async def create_order(
     order = service.create_order(current_user.id, order_data)
     if not order:
         raise HTTPException(status_code=400, detail="Could not create order")
+    NotificationService(db).notify_order_placed(current_user, order, background_tasks)
     return order
 
 @router.get("/orders", response_model=List[OrderDetailResponse])

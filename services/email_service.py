@@ -2,6 +2,7 @@ import logging
 import httpx
 from email.utils import parseaddr
 from pathlib import Path
+from typing import Optional
 from jinja2 import Environment, FileSystemLoader
 import datetime
 
@@ -176,6 +177,39 @@ class EmailService:
         )
         
         subject = f"{settings.APP_NAME} - Account Verified Successfully!"
+        return await self.send_email(to_email, subject, html_content)
+
+    async def send_order_confirmation_email(self, to_email: str, name: str, order_number: str,
+                                            product_name: str, quantity: str, total_price: float,
+                                            delivery_address: str,
+                                            estimated_delivery_date: Optional[datetime.datetime] = None) -> bool:
+        """Send email when an order has been placed successfully"""
+        html_content = self._render_template(
+            'order_confirmation.html',
+            name=name,
+            order_number=order_number,
+            product_name=product_name,
+            quantity=quantity,
+            total_price=f"{total_price:,.2f}",
+            delivery_address=delivery_address,
+            estimated_delivery=estimated_delivery_date.strftime("%d %b %Y") if estimated_delivery_date else None
+        )
+
+        subject = f"{settings.APP_NAME} - Order {order_number} Confirmed"
+        return await self.send_email(to_email, subject, html_content)
+
+    async def send_login_alert_email(self, to_email: str, name: str, login_time: datetime.datetime,
+                                     ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
+        """Send email whenever the account is signed in to"""
+        html_content = self._render_template(
+            'login_alert.html',
+            name=name,
+            login_time=login_time.strftime("%d %b %Y, %H:%M UTC"),
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
+
+        subject = f"{settings.APP_NAME} - New Sign-in to Your Account"
         return await self.send_email(to_email, subject, html_content)
 
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -7,6 +7,7 @@ from features.auth.service import AuthService
 from features.auth.models import OTPMedium, OTPType
 from core.security import create_access_token, create_refresh_token
 from repositories.user_repository import UserRepository
+from features.notifications.service import NotificationService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -20,7 +21,7 @@ async def register_user(user: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/login", response_model=Token)
-async def login(user_login: UserLogin, db: Session = Depends(get_db)):
+async def login(user_login: UserLogin, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     auth_service = AuthService(db)
     user = auth_service.authenticate_user(user_login.login, user_login.password)
     if not user:
@@ -30,6 +31,14 @@ async def login(user_login: UserLogin, db: Session = Depends(get_db)):
     
     access_token = create_access_token(data={"sub": str(user.id)})
     refresh_token = create_refresh_token(data={"sub": str(user.id)})
+
+    # Behind Render's proxy the client IP is the first X-Forwarded-For entry
+    forwarded_for = request.headers.get("x-forwarded-for")
+    ip_address = forwarded_for.split(",")[0].strip() if forwarded_for else (request.client.host if request.client else None)
+    user_agent = request.headers.get("user-agent")
+    NotificationService(db).notify_login(
+        user, background_tasks, ip_address=ip_address, user_agent=user_agent[:200] if user_agent else None
+    )
     
     return {
         "access_token": access_token, 
