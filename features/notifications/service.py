@@ -7,7 +7,9 @@ from sqlalchemy.orm import Session
 
 from features.auth.models import User
 from features.marketplace.models import Order
+from features.notifications.connection_manager import notification_manager
 from features.notifications.models import Notification, NotificationType
+from features.notifications.schemas import NotificationResponse
 from services.email_service import email_service
 
 logger = logging.getLogger(__name__)
@@ -75,20 +77,36 @@ class NotificationService:
         self.db.commit()
         return updated
 
+    def push_notification(self, notification: Notification, background_tasks: BackgroundTasks) -> None:
+        """Queue a real-time push of a new notification plus the updated unread count."""
+        background_tasks.add_task(notification_manager.send_to_user, notification.user_id, {
+            "type": "notification",
+            "data": NotificationResponse.model_validate(notification).model_dump(mode="json"),
+        })
+        self.push_unread_count(notification.user_id, background_tasks)
+
+    def push_unread_count(self, user_id: int, background_tasks: BackgroundTasks) -> None:
+        """Queue a push of the unread count so badges stay in sync across tabs/devices."""
+        background_tasks.add_task(notification_manager.send_to_user, user_id, {
+            "type": "unread_count",
+            "data": {"unread_count": self.get_unread_count(user_id)},
+        })
+
     # Event hooks: write the in-app notification now (the request's DB session is
-    # closed before background tasks run), and queue the email with plain values.
+    # closed before background tasks run), and queue the push and email with plain values.
 
     def notify_order_placed(self, user: User, order: Order, background_tasks: BackgroundTasks) -> None:
         try:
             product_name = order.product.name if order.product else "your item"
             order_number = order.order_number or f"BF{order.id:06d}"
-            self.create(
+            notification = self.create(
                 user.id,
                 NotificationType.ORDER_PLACED,
                 "Order placed successfully",
                 f"Your order {order_number} for {product_name} has been placed.",
                 reference_id=order.id,
             )
+            self.push_notification(notification, background_tasks)
             if user.email:
                 background_tasks.add_task(
                     email_service.send_order_confirmation_email,
@@ -110,13 +128,14 @@ class NotificationService:
                      ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> None:
         try:
             login_time = datetime.now(timezone.utc)
-            self.create(
+            notification = self.create(
                 user.id,
                 NotificationType.LOGIN_ALERT,
                 "New sign-in to your account",
                 f"Your account was signed in to on {login_time:%d %b %Y at %H:%M} UTC. "
                 "If this wasn't you, reset your password immediately.",
             )
+            self.push_notification(notification, background_tasks)
             if user.email:
                 background_tasks.add_task(
                     email_service.send_login_alert_email,
