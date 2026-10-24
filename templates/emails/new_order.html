@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}You have a new BigFarma order{% endblock %}
+{% block preheader %}A buyer ordered {{ product_name }}. Order {{ order_number }}.{% endblock %}
+
+{% block heading %}
+  <!-- Title -->
+  <tr>
+    <td align="center" class="px" style="padding:40px 40px 0 40px;">
+      <h1 class="h1" style="margin:0; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:24px; line-height:32px; font-weight:600; color:#1A1A1A;">You Have a New Order</h1>
+      <p style="margin:12px 0 0 0; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:18px; line-height:26px; color:#333333;">Order #{{ order_number }}</p>
+    </td>
+  </tr>
+{% endblock %}
+
+{% block content %}
+      <p style="margin:0 0 24px 0; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:16px; line-height:24px; color:#333333;">Good news! A buyer has just ordered your produce. Please confirm the order and get it ready for delivery. Here are the details:</p>
+      <!-- Order summary -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #C3CAC7; border-radius:6px;">
+        <tr>
+          <td style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#5F6661; border-bottom:1px dashed #C3CAC7;">Product</td>
+          <td align="right" style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; font-weight:600; color:#1A1A1A; border-bottom:1px dashed #C3CAC7;">{{ product_name }}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#5F6661; border-bottom:1px dashed #C3CAC7;">Quantity</td>
+          <td align="right" style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; font-weight:600; color:#1A1A1A; border-bottom:1px dashed #C3CAC7;">{{ quantity }}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#5F6661; border-bottom:1px dashed #C3CAC7;">Delivery address</td>
+          <td align="right" style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; font-weight:600; color:#1A1A1A; border-bottom:1px dashed #C3CAC7;">{{ delivery_address }}</td>
+        </tr>
+        {% if estimated_delivery %}
+        <tr>
+          <td style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#5F6661; border-bottom:1px dashed #C3CAC7;">Estimated delivery</td>
+          <td align="right" style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; font-weight:600; color:#1A1A1A; border-bottom:1px dashed #C3CAC7;">{{ estimated_delivery }}</td>
+        </tr>
+        {% endif %}
+        <tr>
+          <td style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:16px; line-height:22px; font-weight:600; color:#1A1A1A; background-color:#E6EFEA;">Total</td>
+          <td align="right" style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:16px; line-height:22px; font-weight:700; color:#016130; background-color:#E6EFEA;">&#8358;{{ total_price }}</td>
+        </tr>
+      </table>
+      <p style="margin:24px 0 0 0; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:16px; line-height:24px; color:#333333;">Open your BigFarma dashboard to confirm this order and update its delivery status. The payment is added to your wallet once the buyer confirms delivery.</p>
+{% endblock %}

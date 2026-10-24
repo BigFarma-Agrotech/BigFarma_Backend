@@ -52,6 +52,17 @@ class OrderIssueResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class FarmerOrderResponse(OrderDetailResponse):
+    # Buyer details so the farmer can fulfil the order
+    customer_name: str
+    customer_phone: Optional[str] = None
+
+class FarmerOrderListResponse(BaseModel):
+    items: List[FarmerOrderResponse]
+    total: int
+    skip: int
+    limit: int
+
 class OrderWithDetailsResponse(OrderDetailResponse):
     timeline: List[OrderTimelineResponse] = []
     issues: List[OrderIssueResponse] = []

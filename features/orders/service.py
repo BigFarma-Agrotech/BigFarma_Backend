@@ -1,8 +1,8 @@
 ﻿import logging
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import uuid
 
 # Import models from marketplace (existing) and orders (new)
@@ -12,7 +12,8 @@ from features.orders.schemas import (
     OrderIssueCreate, OrderStatusUpdate, OrderTimelineCreate, OrderFilter
 )
 from features.marketplace.schemas import OrderCreate
-from features.users.models import FarmerProfile
+from features.users.models import FarmerProfile, ConsumerProfile
+from features.auth.models import User
 from features.wallet.integration import WalletIntegration
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,39 @@ class OrderService:
                 )
         
         return query.order_by(Order.created_at.desc()).all()
+
+    def get_farmer_orders(self, farmer_id: int, status: Optional[OrderStatus] = None,
+                          date_from: Optional[date] = None, date_to: Optional[date] = None,
+                          search: Optional[str] = None, skip: int = 0, limit: int = 20) -> Tuple[List[Order], int]:
+        """Orders placed for the farmer's products, newest first, with the total match count."""
+        query = self.db.query(Order).join(Product, Order.product_id == Product.id).filter(
+            Product.farmer_id == farmer_id
+        )
+
+        if status:
+            query = query.filter(Order.status == status)
+        if date_from:
+            query = query.filter(Order.created_at >= datetime.combine(date_from, datetime.min.time()))
+        if date_to:
+            # Inclusive of the whole end day
+            query = query.filter(Order.created_at < datetime.combine(date_to + timedelta(days=1), datetime.min.time()))
+        if search:
+            # Search by order number, product name, or customer name
+            search_term = f"%{search}%"
+            query = query.outerjoin(ConsumerProfile, Order.consumer_id == ConsumerProfile.user_id).filter(
+                Order.order_number.ilike(search_term) |
+                Product.name.ilike(search_term) |
+                ConsumerProfile.first_name.ilike(search_term) |
+                ConsumerProfile.last_name.ilike(search_term)
+            )
+
+        total = query.count()
+        orders = query.options(
+            joinedload(Order.product),
+            joinedload(Order.consumer).joinedload(User.consumer_profile)
+        ).order_by(Order.created_at.desc(), Order.id.desc()).offset(skip).limit(limit).all()
+
+        return orders, total
 
     def get_order_details(self, order_id: int, user_id: int) -> Optional[Order]:
         """Get detailed order information with all related data"""

@@ -1,18 +1,20 @@
 ﻿from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from datetime import date
 
 from database import get_db
 from features.orders.schemas import (
     OrderDetailResponse, OrderWithDetailsResponse, OrderTimelineResponse, 
-    OrderIssueResponse, OrderIssueCreate, OrderStatusUpdate, OrderFilter
+    OrderIssueResponse, OrderIssueCreate, OrderStatusUpdate, OrderFilter,
+    FarmerOrderResponse, FarmerOrderListResponse
 )
 from features.marketplace.schemas import OrderCreate
 from features.orders.service import OrderService
 from features.notifications.service import NotificationService
-from features.marketplace.models import Order, Product
+from features.marketplace.models import Order, Product, OrderStatus
 from features.users.models import FarmerProfile
-from features.auth.models import User
+from features.auth.models import User, UserCategory
 from utils.helpers import split_images
 from core.dependencies import get_current_active_user
 
@@ -109,6 +111,60 @@ async def get_my_orders(
         order_responses.append(order_response)
     
     return order_responses
+
+@router.get("/farmer/orders", response_model=FarmerOrderListResponse)
+async def get_farmer_orders(
+    status: Optional[OrderStatus] = Query(None, description="Filter by order status"),
+    date_from: Optional[date] = Query(None, description="Orders placed on or after this date (YYYY-MM-DD)"),
+    date_to: Optional[date] = Query(None, description="Orders placed on or before this date (YYYY-MM-DD)"),
+    search: Optional[str] = Query(None, description="Search by order number, product name, or customer name"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Orders placed for the current farmer's products, for the farm dashboard."""
+    if current_user.category != UserCategory.FARMER:
+        raise HTTPException(status_code=403, detail="Only farmers can view farm orders")
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=400, detail="date_from must be on or before date_to")
+
+    service = OrderService(db)
+    orders, total = service.get_farmer_orders(current_user.id, status, date_from, date_to, search, skip, limit)
+
+    # Every order here is for the same farm, so look the profile up once
+    farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == current_user.id).first()
+
+    items = []
+    for order in orders:
+        product = order.product
+        consumer = order.consumer
+        consumer_profile = consumer.consumer_profile if consumer else None
+
+        items.append(FarmerOrderResponse(
+            id=order.id,
+            order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
+            consumer_id=order.consumer_id,
+            product_id=order.product_id,
+            quantity_ordered=order.quantity_ordered,
+            total_price=order.total_price,
+            delivery_address=order.delivery_address,
+            contact_phone=order.contact_phone,
+            delivery_notes=order.delivery_notes,
+            status=order.status,
+            estimated_delivery_date=order.estimated_delivery_date,
+            created_at=order.created_at,
+            updated_at=order.updated_at,
+            product_name=product.name,
+            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
+            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer",
+            product_images=split_images(product.images),
+            customer_name=f"{consumer_profile.first_name} {consumer_profile.last_name}" if consumer_profile else "Customer",
+            # Fall back to the account's phone since orders rarely carry their own contact number
+            customer_phone=order.contact_phone or (consumer.phone_number if consumer else None),
+        ))
+
+    return FarmerOrderListResponse(items=items, total=total, skip=skip, limit=limit)
 
 @router.get("/{order_id}", response_model=OrderWithDetailsResponse)
 async def get_order_details(

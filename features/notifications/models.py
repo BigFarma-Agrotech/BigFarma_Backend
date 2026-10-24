@@ -4,7 +4,11 @@ from database import Base
 import enum
 
 class NotificationType(str, enum.Enum):
-    ORDER_PLACED = "order_placed"
+    ORDER_PLACED = "order_placed"          # buyer: their order went through
+    NEW_ORDER = "new_order"                # farmer: someone ordered their product
+    ORDER_STATUS = "order_status"          # buyer: farmer moved the order along
+    DELIVERY_CONFIRMED = "delivery_confirmed"  # farmer: buyer confirmed, wallet credited
+    DELIVERY_ISSUE = "delivery_issue"      # farmer: buyer reported a problem
     LOGIN_ALERT = "login_alert"
 
 class Notification(Base):
