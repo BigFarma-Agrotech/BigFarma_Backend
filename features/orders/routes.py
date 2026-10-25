@@ -242,6 +242,7 @@ async def get_order_details(
 async def report_delivery_issue(
     order_id: int,
     issue_data: OrderIssueCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -254,7 +255,11 @@ async def report_delivery_issue(
             status_code=404, 
             detail="Order not found or you don't have permission to report issues for this order"
         )
-    
+
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if order:
+        NotificationService(db).notify_delivery_issue(order, background_tasks)
+
     return OrderIssueResponse(
         id=issue.id,
         issue_description=issue.issue_description,
@@ -267,6 +272,7 @@ async def report_delivery_issue(
 @router.post("/{order_id}/confirm-delivery", response_model=OrderDetailResponse)
 async def confirm_delivery(
     order_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -279,7 +285,9 @@ async def confirm_delivery(
             status_code=404, 
             detail="Order not found, already confirmed, or you don't have permission to confirm this order"
         )
-    
+
+    NotificationService(db).notify_delivery_confirmed(order, background_tasks)
+
     # Get additional details for response
     product = order.product
     farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
@@ -370,6 +378,7 @@ async def get_order_statistics(
 async def update_order_status(
     order_id: int,
     status_update: OrderStatusUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -387,6 +396,8 @@ async def update_order_status(
     order = service.update_order_status(order_id, status_update, farmer_id=farmer_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+
+    NotificationService(db).notify_order_status_changed(order, background_tasks)
     
     # Get additional details for response
     product = order.product

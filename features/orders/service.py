@@ -1,4 +1,5 @@
 ﻿import logging
+import re
 from typing import List, Optional, Tuple
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
@@ -30,6 +31,10 @@ class OrderService:
             return None
 
         discounted_price = product.price * (1 - (product.discount_percentage or 0) / 100)
+        units = self._parse_units(order_data.quantity_ordered)
+        if units is None:
+            logger.warning("Invalid quantity %r for product %s", order_data.quantity_ordered, order_data.product_id)
+            return None
 
         from datetime import datetime
         import random
@@ -43,7 +48,7 @@ class OrderService:
             product_id=order_data.product_id,
             consumer_id=consumer_id,
             quantity_ordered=order_data.quantity_ordered,
-            total_price=discounted_price,
+            total_price=round(discounted_price * units, 2),
             delivery_address=order_data.delivery_address,
             status=OrderStatus.PENDING,
             order_number=order_number,
@@ -64,6 +69,15 @@ class OrderService:
         self.db.commit()
         self.db.refresh(order)
         return order
+
+    @staticmethod
+    def _parse_units(quantity_ordered: str) -> Optional[float]:
+        """Number of units from quantity_ordered ("2", "2.5", "3 bags"); None if not a positive number."""
+        match = re.match(r"\s*(\d+(?:\.\d+)?)", str(quantity_ordered or ""))
+        if not match:
+            return None
+        units = float(match.group(1))
+        return units if units > 0 else None
 
     def _visible_orders(self, user_id: int):
         """Orders the user placed (consumer) plus orders for products they sell (farmer)."""

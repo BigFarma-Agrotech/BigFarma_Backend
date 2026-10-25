@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     MAIL_FROM: Optional[str] = None
     APP_DOMAIN: str = "https://jellyfish-app-2-i2mfu.ondigitalocean.app/"
 
+    # IP geolocation for login alerts (ipwho.is works without a key at a low monthly limit)
+    IPWHOIS_KEY: Optional[str] = None
+
     # SMS Configuration (Twilio example)
     TWILIO_ACCOUNT_SID: Optional[str] = None
     TWILIO_AUTH_TOKEN: Optional[str] = None

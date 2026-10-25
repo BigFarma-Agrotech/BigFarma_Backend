@@ -218,14 +218,16 @@ class EmailService:
         return await self.send_email(to_email, subject, html_content)
 
     async def send_login_alert_email(self, to_email: str, name: str, login_time: datetime.datetime,
-                                     ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
+                                     ip_address: Optional[str] = None, device: Optional[str] = None,
+                                     location: Optional[str] = None) -> bool:
         """Send email whenever the account is signed in to"""
         html_content = self._render_template(
             'login_alert.html',
             name=name,
             login_time=login_time.strftime("%d %b %Y, %H:%M UTC"),
             ip_address=ip_address,
-            user_agent=user_agent
+            device=device,
+            location=location
         )
 
         subject = f"{settings.APP_NAME} - New Sign-in to Your Account"

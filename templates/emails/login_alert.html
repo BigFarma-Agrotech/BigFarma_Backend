@@ -26,12 +26,16 @@
           <td align="right" style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; font-weight:600; color:#1A1A1A; border-top:1px dashed #C3CAC7;">{{ ip_address }}</td>
         </tr>
         {% endif %}
-        {% if user_agent %}
+        {% if device %}
         <tr>
           <td style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#5F6661; border-top:1px dashed #C3CAC7;">Device</td>
-          <td align="right" style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; font-weight:600; color:#1A1A1A; border-top:1px dashed #C3CAC7;">{{ user_agent }}</td>
+          <td align="right" style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; font-weight:600; color:#1A1A1A; border-top:1px dashed #C3CAC7;">{{ device }}</td>
         </tr>
         {% endif %}
+        <tr>
+          <td style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#5F6661; border-top:1px dashed #C3CAC7;">Location</td>
+          <td align="right" style="padding:14px 20px; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; font-weight:600; color:#1A1A1A; border-top:1px dashed #C3CAC7;">{{ location or "Unknown" }}{% if location %} <span style="font-weight:400; color:#5F6661;">(approximate)</span>{% endif %}</td>
+        </tr>
       </table>
       <p style="margin:24px 0 16px 0; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:16px; line-height:24px; color:#333333;">If this was you, there's nothing you need to do.</p>
       <p style="margin:0; font-family:'Inter', 'Segoe UI', Helvetica, Arial, sans-serif; font-size:16px; line-height:24px; font-weight:700; color:#1A1A1A;">If you don't recognise this sign-in, reset your password immediately and contact support.</p>

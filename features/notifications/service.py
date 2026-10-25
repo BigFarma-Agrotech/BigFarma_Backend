@@ -6,11 +6,13 @@ from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
 from features.auth.models import User
-from features.marketplace.models import Order
+from features.marketplace.models import Order, OrderStatus
 from features.notifications.connection_manager import notification_manager
 from features.notifications.models import Notification, NotificationType
 from features.notifications.schemas import NotificationResponse
+from database import SessionLocal
 from services.email_service import email_service
+from services.login_context import describe_device, lookup_location
 
 logger = logging.getLogger(__name__)
 
@@ -124,28 +126,165 @@ class NotificationService:
             self.db.rollback()
             logger.exception("Failed to send order notifications for order %s", order.id)
 
-    def notify_login(self, user: User, background_tasks: BackgroundTasks,
-                     ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> None:
+        # Separate try so a problem on one side doesn't stop the other
+        self._notify_farmer_new_order(order, background_tasks)
+
+    def _notify_farmer_new_order(self, order: Order, background_tasks: BackgroundTasks) -> None:
         try:
-            login_time = datetime.now(timezone.utc)
+            product = order.product
+            farmer = product.farmer if product else None
+            if not farmer:
+                return
+            order_number = order.order_number or f"BF{order.id:06d}"
             notification = self.create(
-                user.id,
-                NotificationType.LOGIN_ALERT,
-                "New sign-in to your account",
-                f"Your account was signed in to on {login_time:%d %b %Y at %H:%M} UTC. "
-                "If this wasn't you, reset your password immediately.",
+                farmer.id,
+                NotificationType.NEW_ORDER,
+                "New order received",
+                f"A buyer ordered {order.quantity_ordered} of {product.name} (order {order_number}). "
+                "Confirm it from your orders page.",
+                reference_id=order.id,
             )
             self.push_notification(notification, background_tasks)
-            if user.email:
+            if farmer.email:
                 background_tasks.add_task(
-                    email_service.send_login_alert_email,
-                    to_email=user.email,
-                    name=get_display_name(user),
-                    login_time=login_time,
-                    ip_address=ip_address,
-                    user_agent=user_agent,
+                    email_service.send_new_order_email,
+                    to_email=farmer.email,
+                    name=get_display_name(farmer),
+                    order_number=order_number,
+                    product_name=product.name,
+                    quantity=order.quantity_ordered,
+                    total_price=order.total_price,
+                    delivery_address=order.delivery_address,
+                    estimated_delivery_date=order.estimated_delivery_date,
                 )
         except Exception:
-            # Never block a login because a notification couldn't be sent
             self.db.rollback()
-            logger.exception("Failed to send login notifications for user %s", user.id)
+            logger.exception("Failed to notify farmer about order %s", order.id)
+
+    # Buyer-facing wording for each status a farmer can move an order to
+    _STATUS_MESSAGES = {
+        OrderStatus.CONFIRMED: ("Order confirmed", "The farmer has confirmed your order {number} for {product}."),
+        OrderStatus.SHIPPING: ("Order on its way", "Your order {number} for {product} is on its way."),
+        OrderStatus.AWAITING_CONFIRMATION: (
+            "Did your order arrive?",
+            "Your order {number} for {product} has been delivered. Please confirm you received it.",
+        ),
+        OrderStatus.CANCELLED: ("Order cancelled", "Your order {number} for {product} has been cancelled."),
+    }
+
+    def notify_order_status_changed(self, order: Order, background_tasks: BackgroundTasks) -> None:
+        """Tell the buyer when the farmer updates their order."""
+        try:
+            template = self._STATUS_MESSAGES.get(order.status)
+            if not template:
+                return
+            title, message = template
+            product_name = order.product.name if order.product else "your item"
+            notification = self.create(
+                order.consumer_id,
+                NotificationType.ORDER_STATUS,
+                title,
+                message.format(number=order.order_number or f"BF{order.id:06d}", product=product_name),
+                reference_id=order.id,
+            )
+            self.push_notification(notification, background_tasks)
+        except Exception:
+            self.db.rollback()
+            logger.exception("Failed to notify buyer about status change on order %s", order.id)
+
+    def notify_delivery_confirmed(self, order: Order, background_tasks: BackgroundTasks) -> None:
+        """Tell the farmer the buyer confirmed delivery and the sale was credited."""
+        self._notify_farmer(
+            order, background_tasks, NotificationType.DELIVERY_CONFIRMED,
+            "Delivery confirmed",
+            "The buyer confirmed delivery of order {number} for {product}. "
+            "₦{amount:,.2f} has been added to your wallet.",
+        )
+
+    def notify_delivery_issue(self, order: Order, background_tasks: BackgroundTasks) -> None:
+        """Tell the farmer the buyer reported a problem with delivery."""
+        self._notify_farmer(
+            order, background_tasks, NotificationType.DELIVERY_ISSUE,
+            "Delivery issue reported",
+            "The buyer reported a problem with order {number} for {product}. Our support team will follow up.",
+        )
+
+    def _notify_farmer(self, order: Order, background_tasks: BackgroundTasks,
+                       notification_type: NotificationType, title: str, message: str) -> None:
+        try:
+            product = order.product
+            if not product or not product.farmer_id:
+                return
+            notification = self.create(
+                product.farmer_id,
+                notification_type,
+                title,
+                message.format(
+                    number=order.order_number or f"BF{order.id:06d}",
+                    product=product.name,
+                    amount=order.total_price or 0,
+                ),
+                reference_id=order.id,
+            )
+            self.push_notification(notification, background_tasks)
+        except Exception:
+            self.db.rollback()
+            logger.exception("Failed to notify farmer (%s) for order %s", notification_type.value, order.id)
+
+    def notify_login(self, user: User, background_tasks: BackgroundTasks,
+                     ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> None:
+        """Queue the login alert. Unlike the order hooks, all of it runs after the response,
+        because finding the location means calling an outside service."""
+        background_tasks.add_task(
+            deliver_login_notifications,
+            user_id=user.id,
+            email=user.email,
+            name=get_display_name(user),
+            login_time=datetime.now(timezone.utc),
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+
+async def deliver_login_notifications(user_id: int, email: Optional[str], name: str, login_time: datetime,
+                                      ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> None:
+    """Create, push and email the login alert. Runs as a background task, so it opens its
+    own DB session (the request's one is already closed) and never raises."""
+    device = describe_device(user_agent)
+    location = await lookup_location(ip_address)
+
+    details = " ".join(filter(None, [
+        f"from {device}" if device else None,
+        f"in {location}" if location else None,
+    ]))
+    message = (
+        f"New sign-in {details + ' ' if details else ''}on {login_time:%d %b %Y at %H:%M} UTC. "
+        "If this wasn't you, reset your password immediately."
+    )
+
+    db = SessionLocal()
+    try:
+        service = NotificationService(db)
+        notification = service.create(user_id, NotificationType.LOGIN_ALERT, "New sign-in to your account", message)
+        payload = NotificationResponse.model_validate(notification).model_dump(mode="json")
+        unread_count = service.get_unread_count(user_id)
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to create login notification for user %s", user_id)
+        payload = None
+    finally:
+        db.close()
+
+    if payload:
+        await notification_manager.send_to_user(user_id, {"type": "notification", "data": payload})
+        await notification_manager.send_to_user(user_id, {"type": "unread_count", "data": {"unread_count": unread_count}})
+
+    if email:
+        await email_service.send_login_alert_email(
+            to_email=email,
+            name=name,
+            login_time=login_time,
+            ip_address=ip_address,
+            device=device,
+            location=location,
+        )
