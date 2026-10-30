@@ -10,7 +10,7 @@ from features.orders.schemas import (
     FarmerOrderResponse, FarmerOrderListResponse
 )
 from features.marketplace.schemas import OrderCreate
-from features.orders.service import OrderService
+from features.orders.service import OrderService, InvalidStatusTransition
 from features.notifications.service import NotificationService
 from features.marketplace.models import Order, Product, OrderStatus
 from features.users.models import FarmerProfile
@@ -19,6 +19,37 @@ from utils.helpers import split_images
 from core.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
+
+
+def _farmer_order_response(order: Order, farmer_profile: Optional[FarmerProfile]) -> FarmerOrderResponse:
+    """An order as the selling farmer sees it, including the buyer's contact details."""
+    product = order.product
+    consumer = order.consumer
+    consumer_profile = consumer.consumer_profile if consumer else None
+
+    return FarmerOrderResponse(
+        id=order.id,
+        order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
+        consumer_id=order.consumer_id,
+        product_id=order.product_id,
+        quantity_ordered=order.quantity_ordered,
+        total_price=order.total_price,
+        delivery_address=order.delivery_address,
+        contact_phone=order.contact_phone,
+        delivery_notes=order.delivery_notes,
+        status=order.status,
+        estimated_delivery_date=order.estimated_delivery_date,
+        created_at=order.created_at,
+        updated_at=order.updated_at,
+        product_name=product.name,
+        farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
+        farmer_name=farmer_profile.full_name if farmer_profile else "Farmer",
+        product_images=split_images(product.images),
+        customer_name=f"{consumer_profile.first_name} {consumer_profile.last_name}" if consumer_profile else "Customer",
+        # Fall back to the account's phone since orders rarely carry their own contact number
+        customer_phone=order.contact_phone or (consumer.phone_number if consumer else None),
+    )
+
 
 @router.post("/", response_model=OrderDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_order(
@@ -118,6 +149,7 @@ async def get_farmer_orders(
     date_from: Optional[date] = Query(None, description="Orders placed on or after this date (YYYY-MM-DD)"),
     date_to: Optional[date] = Query(None, description="Orders placed on or before this date (YYYY-MM-DD)"),
     search: Optional[str] = Query(None, description="Search by order number, product name, or customer name"),
+    product_id: Optional[int] = Query(None, description="Only orders for this product"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -130,41 +162,32 @@ async def get_farmer_orders(
         raise HTTPException(status_code=400, detail="date_from must be on or before date_to")
 
     service = OrderService(db)
-    orders, total = service.get_farmer_orders(current_user.id, status, date_from, date_to, search, skip, limit)
+    orders, total = service.get_farmer_orders(
+        current_user.id, status, date_from, date_to, search, skip, limit, product_id=product_id
+    )
 
     # Every order here is for the same farm, so look the profile up once
     farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == current_user.id).first()
 
-    items = []
-    for order in orders:
-        product = order.product
-        consumer = order.consumer
-        consumer_profile = consumer.consumer_profile if consumer else None
-
-        items.append(FarmerOrderResponse(
-            id=order.id,
-            order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
-            consumer_id=order.consumer_id,
-            product_id=order.product_id,
-            quantity_ordered=order.quantity_ordered,
-            total_price=order.total_price,
-            delivery_address=order.delivery_address,
-            contact_phone=order.contact_phone,
-            delivery_notes=order.delivery_notes,
-            status=order.status,
-            estimated_delivery_date=order.estimated_delivery_date,
-            created_at=order.created_at,
-            updated_at=order.updated_at,
-            product_name=product.name,
-            farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
-            farmer_name=farmer_profile.full_name if farmer_profile else "Farmer",
-            product_images=split_images(product.images),
-            customer_name=f"{consumer_profile.first_name} {consumer_profile.last_name}" if consumer_profile else "Customer",
-            # Fall back to the account's phone since orders rarely carry their own contact number
-            customer_phone=order.contact_phone or (consumer.phone_number if consumer else None),
-        ))
-
+    items = [_farmer_order_response(order, farmer_profile) for order in orders]
     return FarmerOrderListResponse(items=items, total=total, skip=skip, limit=limit)
+
+@router.get("/farmer/orders/{order_id}", response_model=FarmerOrderResponse)
+async def get_farmer_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """One order for the current farmer's products, with the buyer's contact details."""
+    if current_user.category != UserCategory.FARMER:
+        raise HTTPException(status_code=403, detail="Only farmers can view farm orders")
+
+    order = OrderService(db).get_farmer_order(current_user.id, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == current_user.id).first()
+    return _farmer_order_response(order, farmer_profile)
 
 @router.get("/{order_id}", response_model=OrderWithDetailsResponse)
 async def get_order_details(
@@ -393,7 +416,10 @@ async def update_order_status(
 
     # Farmers may only update orders for their own products
     farmer_id = current_user.id if current_user.category == "farmer" else None
-    order = service.update_order_status(order_id, status_update, farmer_id=farmer_id)
+    try:
+        order = service.update_order_status(order_id, status_update, farmer_id=farmer_id)
+    except InvalidStatusTransition as e:
+        raise HTTPException(status_code=409, detail=str(e))
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 

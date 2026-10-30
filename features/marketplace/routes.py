@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 
 from database import get_db
-from features.marketplace.models import Product
+from features.marketplace.models import Product, Order
 from features.marketplace.schemas import (
-    ProductCreate, ProductResponse, ProductUpdate, ProductDetailResponse,
+    ProductCreate, ProductResponse, FarmerProductResponse, ProductUpdate, ProductDetailResponse,
     ProductPublicResponse, OrderCreate, OrderResponse, OrderDetailResponse,
     ReviewCreate, ReviewResponse, ProductSearchResponse
 )
@@ -198,17 +199,26 @@ async def create_product(
         print(f"Error creating product: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.get("/farmers/products", response_model=List[ProductResponse])
+@router.get("/farmers/products", response_model=List[FarmerProductResponse])
 async def get_my_products(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     if current_user.category != "farmer":
         raise HTTPException(status_code=403, detail="Only farmers can view their products")
-    
+
     service = MarketplaceService(db)
     products = service.get_farmer_products(current_user.id)
-    
+
+    # One grouped query rather than a count per product
+    product_ids = [product.id for product in products]
+    order_counts = dict(
+        db.query(Order.product_id, func.count(Order.id))
+        .filter(Order.product_id.in_(product_ids))
+        .group_by(Order.product_id)
+        .all()
+    ) if product_ids else {}
+
     response_products = []
     for product in products:
         images = []
@@ -218,7 +228,7 @@ async def get_my_products(
             elif isinstance(product.images, list):
                 images = product.images
         
-        response_products.append(ProductResponse(
+        response_products.append(FarmerProductResponse(
             id=product.id,
             farmer_id=product.farmer_id,
             name=product.name,
@@ -235,9 +245,10 @@ async def get_my_products(
             total_ratings=product.total_ratings or 0,
             average_rating=product.average_rating or 0.0,
             created_at=product.created_at,
-            updated_at=product.updated_at
+            updated_at=product.updated_at,
+            order_count=order_counts.get(product.id, 0)
         ))
-    
+
     return response_products
 
 @router.put("/farmers/products/{product_id}", response_model=ProductResponse)

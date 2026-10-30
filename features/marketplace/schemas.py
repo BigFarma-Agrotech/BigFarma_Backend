@@ -115,6 +115,10 @@ class ProductResponse(ProductBase):
 
     model_config = ConfigDict(from_attributes=True)
 
+class FarmerProductResponse(ProductResponse):
+    # Orders placed for this product, for the farmer's orders table
+    order_count: int = 0
+
 class FarmerInfo(BaseModel):
     id: int
     full_name: Optional[str] = None

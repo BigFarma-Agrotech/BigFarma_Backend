@@ -19,6 +19,20 @@ from features.wallet.integration import WalletIntegration
 
 logger = logging.getLogger(__name__)
 
+# Statuses a farmer may move an order to from each status. Delivered and
+# delivery_issue are only reached through the buyer (confirm-delivery credits
+# the farmer's wallet, report-issue opens a dispute), so farmers can't set them.
+FARMER_STATUS_TRANSITIONS = {
+    OrderStatus.PENDING: {OrderStatus.CONFIRMED, OrderStatus.SHIPPING, OrderStatus.CANCELLED},
+    OrderStatus.CONFIRMED: {OrderStatus.SHIPPING, OrderStatus.CANCELLED},
+    OrderStatus.SHIPPING: {OrderStatus.AWAITING_CONFIRMATION},
+}
+
+
+class InvalidStatusTransition(ValueError):
+    """Raised when a farmer tries to move an order to a status they can't set from its current one."""
+
+
 class OrderService:
     def __init__(self, db: Session):
         self.db = db
@@ -111,12 +125,15 @@ class OrderService:
 
     def get_farmer_orders(self, farmer_id: int, status: Optional[OrderStatus] = None,
                           date_from: Optional[date] = None, date_to: Optional[date] = None,
-                          search: Optional[str] = None, skip: int = 0, limit: int = 20) -> Tuple[List[Order], int]:
+                          search: Optional[str] = None, skip: int = 0, limit: int = 20,
+                          product_id: Optional[int] = None) -> Tuple[List[Order], int]:
         """Orders placed for the farmer's products, newest first, with the total match count."""
         query = self.db.query(Order).join(Product, Order.product_id == Product.id).filter(
             Product.farmer_id == farmer_id
         )
 
+        if product_id is not None:
+            query = query.filter(Order.product_id == product_id)
         if status:
             query = query.filter(Order.status == status)
         if date_from:
@@ -141,6 +158,13 @@ class OrderService:
         ).order_by(Order.created_at.desc(), Order.id.desc()).offset(skip).limit(limit).all()
 
         return orders, total
+
+    def get_farmer_order(self, farmer_id: int, order_id: int) -> Optional[Order]:
+        """One order for the farmer's products, with the buyer loaded for the contact card."""
+        return self.db.query(Order).join(Product, Order.product_id == Product.id).options(
+            joinedload(Order.product),
+            joinedload(Order.consumer).joinedload(User.consumer_profile)
+        ).filter(Order.id == order_id, Product.farmer_id == farmer_id).first()
 
     def get_order_details(self, order_id: int, user_id: int) -> Optional[Order]:
         """Get detailed order information with all related data"""
@@ -260,7 +284,9 @@ class OrderService:
         """Update order status (typically used by farmers/admin).
 
         When farmer_id is given, only orders for that farmer's own products can
-        be changed; any other order is reported as not found.
+        be changed; any other order is reported as not found, and the change
+        must be allowed by FARMER_STATUS_TRANSITIONS or InvalidStatusTransition
+        is raised.
         """
         query = self.db.query(Order).join(Product, Order.product_id == Product.id).filter(Order.id == order_id)
         if farmer_id is not None:
@@ -270,6 +296,10 @@ class OrderService:
             return None
         
         old_status = order.status
+        if farmer_id is not None and status_update.status not in FARMER_STATUS_TRANSITIONS.get(old_status, set()):
+            raise InvalidStatusTransition(
+                f"Can't change an order from {old_status.value} to {status_update.status.value}"
+            )
         order.status = status_update.status
         
         if status_update.delivery_notes:
