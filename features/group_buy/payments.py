@@ -25,6 +25,7 @@ from features.notifications.models import NotificationType
 from features.notifications.service import NotificationService
 from features.orders.models import OrderTimelineStatus
 from features.payments import paystack
+from features.marketplace.stock import adjust_stock
 from features.payments.service import CheckoutError, _allowed_callback, _payment_email, _reference
 from utils.units import format_quantity, is_count_unit, unit_label
 
@@ -95,6 +96,10 @@ class GroupPaymentService:
             raise CheckoutError(f"Choose a whole number of {unit_label(2, unit)}.")
         if data.quantity > remaining + 1e-9:
             raise CheckoutError(f"The group only needs {format_quantity(remaining, unit)} more.")
+        # Paid shares are taken out of stock, so what's left must cover this one
+        stock = product.available_quantity
+        if stock is not None and data.quantity > stock + 1e-9:
+            raise CheckoutError(f"The farmer only has {format_quantity(stock, unit)} left in stock.")
 
         if existing:
             # Top-up: any amount up to what's left; no new slot is used
@@ -169,6 +174,9 @@ class GroupPaymentService:
             member.status = GroupMemberStatus.ACTIVE
             member.joined_at = datetime.now(timezone.utc)
         member.quantity_committed = round((member.quantity_committed or 0) + quantity, 6)
+        # The paid share is reserved from the product's stock
+        if quantity:
+            adjust_stock(self.db, group.product_id, -quantity)
         member.contribution_amount = round((member.contribution_amount or 0) + payment.subtotal, 2)
         self.db.add(GroupTransaction(
             group_id=group.id, member_id=member.id, amount=payment.subtotal,
@@ -253,6 +261,9 @@ class GroupPaymentService:
                 ))
                 if paid_back:
                     group.group_wallet_balance = round((group.group_wallet_balance or 0) - payment.subtotal, 2)
+            # The group never ordered, so the member's reserved share goes back on sale
+            if member.quantity_committed:
+                adjust_stock(self.db, group.product_id, member.quantity_committed)
             member.status = GroupMemberStatus.REMOVED
             member.left_at = datetime.now(timezone.utc)
             self.db.commit()

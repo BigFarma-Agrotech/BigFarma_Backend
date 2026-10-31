@@ -308,6 +308,7 @@ class GroupBuyService:
                 "category": group.product.category,
                 "price": group.product.price,
                 "unit": group.product.unit,
+                "quantity": group.product.quantity,  # the farmer's stock left
                 "location": group.product.location,
                 "images": public_images(group.product),
                 "availability": group.product.availability

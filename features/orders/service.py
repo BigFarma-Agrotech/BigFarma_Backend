@@ -146,7 +146,7 @@ class OrderService:
                     Product.name.ilike(search_term) |
                     FarmerProfile.farm_name.ilike(search_term)
                 )
-        
+
         return query.options(joinedload(Order.product)).order_by(Order.created_at.desc()).all()
 
     def get_farmer_orders(self, farmer_id: int, status: Optional[OrderStatus] = None,
@@ -230,34 +230,34 @@ class OrderService:
             Order.consumer_id == user_id,
             Order.payment_status == OrderPaymentStatus.PAID
         ).first()
-        
+
         if not order:
             logger.warning(f"Order {order_id} not found for user {user_id}")
             return None
-        
+
         # Create the issue report
         issue = OrderIssue(
             order_id=order_id,
             consumer_id=user_id,
             issue_description=issue_data.issue_description
         )
-        
+
         # Update order status to reflect delivery issue
         order.status = OrderStatus.DELIVERY_ISSUE
-        
+
         # Create timeline entry for the issue
         self._create_timeline_entry(
-            order_id, 
-            OrderTimelineStatus.AWAITING_CONFIRMATION, 
-            "Delivery Issue - Pending review", 
+            order_id,
+            OrderTimelineStatus.AWAITING_CONFIRMATION,
+            "Delivery Issue - Pending review",
             "We've logged your report. Support will contact you within 24-48 hours.",
             False
         )
-        
+
         self.db.add(issue)
         self.db.commit()
         self.db.refresh(issue)
-        
+
         logger.info(f"Delivery issue reported for order {order_id} by user {user_id}")
         return issue
 
@@ -268,15 +268,15 @@ class OrderService:
             Order.consumer_id == user_id,
             Order.payment_status == OrderPaymentStatus.PAID
         ).first()
-        
+
         if not order:
             return None
-        
+
         # Only allow confirmation if order is in awaiting confirmation status
         if order.status != OrderStatus.AWAITING_CONFIRMATION:
             logger.warning(f"Order {order_id} cannot be confirmed - current status: {order.status}")
             return None
-        
+
         order.status = OrderStatus.DELIVERED
 
         # Credit the farmer's wallet for the completed sale
@@ -296,16 +296,16 @@ class OrderService:
 
         # Create timeline entry for delivery confirmation
         self._create_timeline_entry(
-            order_id, 
-            OrderTimelineStatus.DELIVERED, 
-            "Delivery Confirmed", 
+            order_id,
+            OrderTimelineStatus.DELIVERED,
+            "Delivery Confirmed",
             "You have confirmed receipt of your order. Thank you! The farmer has been notified.",
             True
         )
-        
+
         self.db.commit()
         self.db.refresh(order)
-        
+
         logger.info(f"Order {order_id} delivery confirmed by user {user_id}")
         return order
 
@@ -325,23 +325,29 @@ class OrderService:
         order = query.first()
         if not order:
             return None
-        
+
         old_status = order.status
         if farmer_id is not None and status_update.status not in FARMER_STATUS_TRANSITIONS.get(old_status, set()):
             raise InvalidStatusTransition(
                 f"Can't change an order from {old_status.value} to {status_update.status.value}"
             )
         order.status = status_update.status
-        
+        if status_update.status == OrderStatus.CANCELLED and old_status != OrderStatus.CANCELLED:
+            # A cancelled order never ships, so its quantity is back for sale
+            units = self._parse_units(order.quantity_ordered)
+            if units:
+                from features.marketplace.stock import adjust_stock
+                adjust_stock(self.db, order.product_id, units)
+
         if status_update.delivery_notes:
             order.delivery_notes = status_update.delivery_notes
-        
+
         # Create timeline entry for status change
         self._handle_status_change_timeline(order_id, status_update.status, old_status)
-        
+
         self.db.commit()
         self.db.refresh(order)
-        
+
         logger.info(f"Order {order_id} status updated from {old_status} to {status_update.status}")
         return order
 
@@ -353,10 +359,10 @@ class OrderService:
             Order.consumer_id == user_id,
             Order.payment_status == OrderPaymentStatus.PAID
         ).first()
-        
+
         if not order:
             return None
-        
+
         timeline_entry = OrderTimeline(
             order_id=order_id,
             status=timeline_data.status,
@@ -365,15 +371,15 @@ class OrderService:
             is_completed=timeline_data.is_completed,
             completed_at=datetime.now() if timeline_data.is_completed else None
         )
-        
+
         self.db.add(timeline_entry)
         self.db.commit()
         self.db.refresh(timeline_entry)
-        
+
         return timeline_entry
 
     # Helper methods
-    def _create_timeline_entry(self, order_id: int, status: OrderTimelineStatus, title: str, 
+    def _create_timeline_entry(self, order_id: int, status: OrderTimelineStatus, title: str,
                              description: str, is_completed: bool = False):
         """Create a timeline entry for an order"""
         timeline_entry = OrderTimeline(
@@ -384,7 +390,7 @@ class OrderService:
             is_completed=is_completed,
             completed_at=datetime.now() if is_completed else None
         )
-        
+
         self.db.add(timeline_entry)
         # Note: Don't commit here, let the calling method handle it
 
@@ -398,12 +404,12 @@ class OrderService:
             OrderStatus.CANCELLED: ("Order Cancelled", "Order has been cancelled"),
             OrderStatus.DELIVERY_ISSUE: ("Delivery Issue", "There was an issue with the delivery")
         }
-        
+
         if new_status in status_mappings:
             title, description = status_mappings[new_status]
             timeline_status = self._get_timeline_status_from_order_status(new_status)
             is_completed = new_status in [OrderStatus.SHIPPING, OrderStatus.AWAITING_CONFIRMATION, OrderStatus.DELIVERED]
-            
+
             self._create_timeline_entry(order_id, timeline_status, title, description, is_completed)
 
     def _get_timeline_status_from_order_status(self, order_status: OrderStatus) -> OrderTimelineStatus:
@@ -422,7 +428,7 @@ class OrderService:
     def get_order_statistics(self, user_id: int) -> dict:
         """Get order statistics for a user"""
         orders = self.db.query(Order).filter(Order.consumer_id == user_id, Order.payment_status == OrderPaymentStatus.PAID).all()
-        
+
         stats = {
             "total_orders": len(orders),
             "pending_orders": len([o for o in orders if o.status == OrderStatus.PENDING]),
@@ -431,7 +437,7 @@ class OrderService:
             "total_spent": sum([o.total_price for o in orders if o.status != OrderStatus.CANCELLED]),
             "average_order_value": 0
         }
-        
+
         if stats["total_orders"] > 0:
             stats["average_order_value"] = stats["total_spent"] / stats["total_orders"]
 

@@ -23,6 +23,7 @@ from features.marketplace.models import (
 from features.marketplace.schemas import OrderCreate
 from features.notifications.service import NotificationService
 from features.orders.service import OrderService, order_quantity_problem
+from features.marketplace.stock import adjust_stock
 from utils.units import format_quantity
 from features.payments import paystack
 from features.payments.schemas import CheckoutRequest, PaymentOrder, PaymentResponse
@@ -246,6 +247,10 @@ class PaymentService:
             return
         for order in payment.orders:
             order.payment_status = OrderPaymentStatus.PAID
+            # Paid orders take their quantity out of the product's stock
+            units = OrderService._parse_units(order.quantity_ordered)
+            if units:
+                adjust_stock(self.db, order.product_id, -units)
         self.db.commit()
         self.db.refresh(payment)
         logger.info("Payment %s confirmed for %s order(s)", payment.reference, len(payment.orders))
