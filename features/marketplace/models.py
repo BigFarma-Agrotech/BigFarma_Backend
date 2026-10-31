@@ -63,6 +63,41 @@ class Product(Base):
     orders = relationship("Order", back_populates="product")
     reviews = relationship("Review", back_populates="product")
 
+class PaymentStatus(str, enum.Enum):
+    PENDING = "pending"      # sent to Paystack, not paid yet
+    SUCCESS = "success"
+    FAILED = "failed"
+    ABANDONED = "abandoned"  # the buyer left the Paystack page
+
+
+class OrderPaymentStatus:
+    # Plain strings (stored as String): only paid orders reach the farmer
+    UNPAID = "unpaid"
+    PAID = "paid"
+
+
+class Payment(Base):
+    """One Paystack transaction covering every order from a checkout."""
+    __tablename__ = "payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # Sent to Paystack as the transaction reference
+    reference = Column(String, unique=True, index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    email = Column(String, nullable=False)
+    subtotal = Column(Float, nullable=False)
+    delivery_fee = Column(Float, nullable=False, default=0.0)
+    tax = Column(Float, nullable=False, default=0.0)
+    amount = Column(Float, nullable=False)          # naira, what the buyer pays
+    amount_kobo = Column(Integer, nullable=False)   # what Paystack is asked to charge
+    status = Column(String, nullable=False, default=PaymentStatus.PENDING.value)
+    gateway_response = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+
+    orders = relationship("Order", back_populates="payment")
+
+
 class Order(Base):
     __tablename__ = "orders"
     
@@ -81,6 +116,10 @@ class Order(Base):
     
     # Enhanced order tracking
     order_number = Column(String, unique=True, nullable=True)  # Generated order number
+    # Orders exist from checkout but only count (and reach the farmer) once paid
+    payment_status = Column(String, nullable=False, default=OrderPaymentStatus.UNPAID,
+                            server_default=OrderPaymentStatus.UNPAID, index=True)
+    payment_id = Column(Integer, ForeignKey("payments.id"), nullable=True, index=True)
     estimated_delivery_date = Column(DateTime(timezone=True), nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -89,6 +128,7 @@ class Order(Base):
     # Relationships
     product = relationship("Product", back_populates="orders")
     consumer = relationship("User", back_populates="orders")
+    payment = relationship("Payment", back_populates="orders")
 
     @property
     def product_public_id(self):

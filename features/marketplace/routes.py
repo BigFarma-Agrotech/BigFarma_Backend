@@ -1,17 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 
 from database import get_db
-from features.marketplace.models import Product, Order
+from features.marketplace.models import Product, Order, OrderPaymentStatus
 from features.marketplace.schemas import (
     ProductCreate, ProductResponse, FarmerProductResponse, ProductUpdate, ProductDetailResponse,
-    ProductPublicResponse, OrderCreate, OrderResponse, OrderDetailResponse,
+    ProductPublicResponse, OrderDetailResponse,
     ReviewCreate, ReviewResponse, ProductSearchResponse
 )
 from features.marketplace.service import MarketplaceService
-from features.notifications.service import NotificationService
 from features.auth.models import User
 from features.users.models import FarmerProfile
 from core.dependencies import get_current_active_user
@@ -219,7 +218,7 @@ async def get_my_products(
     product_ids = [product.id for product in products]
     status_rows = (
         db.query(Order.product_id, Order.status, func.count(Order.id))
-        .filter(Order.product_id.in_(product_ids))
+        .filter(Order.product_id.in_(product_ids), Order.payment_status == OrderPaymentStatus.PAID)
         .group_by(Order.product_id, Order.status)
         .all()
     ) if product_ids else []
@@ -358,19 +357,13 @@ async def remove_discount(
     return {"message": "Discount removed successfully"}
 
 # Order management
-@router.post("/orders", response_model=OrderResponse)
-async def create_order(
-    order_data: OrderCreate,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    service = MarketplaceService(db)
-    order = service.create_order(current_user.id, order_data)
-    if not order:
-        raise HTTPException(status_code=400, detail="Could not create order")
-    NotificationService(db).notify_order_placed(current_user, order, background_tasks)
-    return order
+# Ordering without paying is no longer possible; checkout creates the orders
+@router.post("/orders", status_code=status.HTTP_410_GONE, include_in_schema=False)
+async def create_order():
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Orders are placed through checkout and paid with Paystack: POST /api/v1/payments/checkout",
+    )
 
 @router.get("/orders", response_model=List[OrderDetailResponse])
 async def get_my_orders(

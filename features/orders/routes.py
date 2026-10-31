@@ -9,7 +9,6 @@ from features.orders.schemas import (
     OrderIssueResponse, OrderIssueCreate, OrderStatusUpdate, OrderFilter,
     FarmerOrderResponse, FarmerOrderListResponse
 )
-from features.marketplace.schemas import OrderCreate
 from features.orders.service import OrderService, InvalidStatusTransition
 from features.notifications.service import NotificationService
 from features.marketplace.models import Order, Product, OrderStatus
@@ -54,53 +53,16 @@ def _farmer_order_response(order: Order, farmer_profile: Optional[FarmerProfile]
     )
 
 
+GONE_DETAIL = "Orders are placed through checkout and paid with Paystack: POST /api/v1/payments/checkout"
+
+# Ordering without paying is no longer possible; checkout creates the orders
+@router.post("", status_code=status.HTTP_410_GONE, include_in_schema=False)
+@router.post("/", status_code=status.HTTP_410_GONE, include_in_schema=False)
+async def create_order():
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail=GONE_DETAIL)
+
 # Also served without the trailing slash: Vercel's /api/v1/:path* rewrite drops
-# "/notifications/"-style URLs, and the slash redirect points at the backend host (CORS-blocked)
-@router.post("", response_model=OrderDetailResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
-@router.post("/", response_model=OrderDetailResponse, status_code=status.HTTP_201_CREATED)
-async def create_order(
-    order_data: OrderCreate,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    """Create a new order for the current consumer."""
-    if current_user.category != "consumer":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only consumers can create orders")
-
-    service = OrderService(db)
-    order = service.create_order(current_user.id, order_data)
-    if not order:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Product unavailable or order could not be created")
-
-    NotificationService(db).notify_order_placed(current_user, order, background_tasks)
-
-    product = order.product
-    farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first() if product else None
-    product_images = split_images(product.images) if product else []
-
-    return OrderDetailResponse(
-        id=order.id,
-        public_id=order.public_id,
-        order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
-        consumer_id=order.consumer_id,
-        product_id=order.product_id,
-        product_public_id=order.product_public_id,
-        quantity_ordered=order.quantity_ordered,
-        total_price=order.total_price,
-        delivery_address=order.delivery_address,
-        contact_phone=getattr(order, 'contact_phone', None),
-        delivery_notes=getattr(order, 'delivery_notes', None),
-        status=order.status,
-        estimated_delivery_date=getattr(order, 'estimated_delivery_date', None),
-        created_at=order.created_at,
-        updated_at=order.updated_at,
-        product_name=product.name if product else "Unknown Product",
-        farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
-        farmer_name=farmer_profile.full_name if farmer_profile else "Farmer",
-        product_images=product_images,
-    )
-
+# "/orders/"-style URLs, and the slash redirect points at the backend host (CORS-blocked)
 @router.get("", response_model=List[OrderDetailResponse], include_in_schema=False)
 @router.get("/", response_model=List[OrderDetailResponse])
 async def get_my_orders(

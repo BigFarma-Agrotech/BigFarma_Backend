@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 import uuid
 
 # Import models from marketplace (existing) and orders (new)
-from features.marketplace.models import Order, Product, OrderStatus, AvailabilityStatus
+from features.marketplace.models import Order, Product, OrderStatus, AvailabilityStatus, OrderPaymentStatus
 from features.orders.models import OrderTimeline, OrderIssue, OrderTimelineStatus, IssueStatus
 from features.orders.schemas import (
     OrderIssueCreate, OrderStatusUpdate, OrderTimelineCreate, OrderFilter
@@ -37,8 +37,12 @@ class OrderService:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_order(self, consumer_id: int, order_data: OrderCreate) -> Optional[Order]:
-        """Create a new order and record initial timeline."""
+    def create_order(self, consumer_id: int, order_data: OrderCreate, contact_phone: Optional[str] = None,
+                     payment_id: Optional[int] = None, commit: bool = True) -> Optional[Order]:
+        """Create a new (unpaid) order and record initial timeline.
+
+        With commit=False the caller commits, so several orders can be created
+        all-or-nothing (as checkout does)."""
         product = self.db.query(Product).filter(Product.id == order_data.product_id).first()
         if not product or product.availability != AvailabilityStatus.IN_STOCK:
             logger.warning("Product %s not available for ordering", order_data.product_id)
@@ -64,6 +68,8 @@ class OrderService:
             quantity_ordered=order_data.quantity_ordered,
             total_price=round(discounted_price * units, 2),
             delivery_address=order_data.delivery_address,
+            contact_phone=contact_phone,
+            payment_id=payment_id,
             status=OrderStatus.PENDING,
             order_number=order_number,
             estimated_delivery_date=datetime.now() + timedelta(days=3),
@@ -80,8 +86,9 @@ class OrderService:
             True,
         )
 
-        self.db.commit()
-        self.db.refresh(order)
+        if commit:
+            self.db.commit()
+            self.db.refresh(order)
         return order
 
     @staticmethod
@@ -96,7 +103,8 @@ class OrderService:
     def _visible_orders(self, user_id: int):
         """Orders the user placed (consumer) plus orders for products they sell (farmer)."""
         return self.db.query(Order).join(Product, Order.product_id == Product.id).filter(
-            or_(Order.consumer_id == user_id, Product.farmer_id == user_id)
+            or_(Order.consumer_id == user_id, Product.farmer_id == user_id),
+            Order.payment_status == OrderPaymentStatus.PAID
         )
 
     def get_user_orders(self, user_id: int, order_filter: Optional[OrderFilter] = None) -> List[Order]:
@@ -129,7 +137,8 @@ class OrderService:
                           product_id: Optional[int] = None) -> Tuple[List[Order], int]:
         """Orders placed for the farmer's products, newest first, with the total match count."""
         query = self.db.query(Order).join(Product, Order.product_id == Product.id).filter(
-            Product.farmer_id == farmer_id
+            Product.farmer_id == farmer_id,
+            Order.payment_status == OrderPaymentStatus.PAID
         )
 
         if product_id is not None:
@@ -164,7 +173,7 @@ class OrderService:
         return self.db.query(Order).join(Product, Order.product_id == Product.id).options(
             joinedload(Order.product),
             joinedload(Order.consumer).joinedload(User.consumer_profile)
-        ).filter(Order.id == order_id, Product.farmer_id == farmer_id).first()
+        ).filter(Order.id == order_id, Product.farmer_id == farmer_id, Order.payment_status == OrderPaymentStatus.PAID).first()
 
     def get_order_details(self, order_id: int, user_id: int) -> Optional[Order]:
         """Get detailed order information with all related data"""
@@ -200,7 +209,8 @@ class OrderService:
         # Verify the order belongs to the consumer
         order = self.db.query(Order).filter(
             Order.id == order_id,
-            Order.consumer_id == user_id
+            Order.consumer_id == user_id,
+            Order.payment_status == OrderPaymentStatus.PAID
         ).first()
         
         if not order:
@@ -237,7 +247,8 @@ class OrderService:
         """Consumer confirms they received their order"""
         order = self.db.query(Order).filter(
             Order.id == order_id,
-            Order.consumer_id == user_id
+            Order.consumer_id == user_id,
+            Order.payment_status == OrderPaymentStatus.PAID
         ).first()
         
         if not order:
@@ -288,7 +299,9 @@ class OrderService:
         must be allowed by FARMER_STATUS_TRANSITIONS or InvalidStatusTransition
         is raised.
         """
-        query = self.db.query(Order).join(Product, Order.product_id == Product.id).filter(Order.id == order_id)
+        query = self.db.query(Order).join(Product, Order.product_id == Product.id).filter(
+            Order.id == order_id, Order.payment_status == OrderPaymentStatus.PAID
+        )
         if farmer_id is not None:
             query = query.filter(Product.farmer_id == farmer_id)
         order = query.first()
@@ -319,7 +332,8 @@ class OrderService:
         # Verify the user has access to the order
         order = self.db.query(Order).filter(
             Order.id == order_id,
-            Order.consumer_id == user_id
+            Order.consumer_id == user_id,
+            Order.payment_status == OrderPaymentStatus.PAID
         ).first()
         
         if not order:
@@ -389,7 +403,7 @@ class OrderService:
     # Analytics methods
     def get_order_statistics(self, user_id: int) -> dict:
         """Get order statistics for a user"""
-        orders = self.db.query(Order).filter(Order.consumer_id == user_id).all()
+        orders = self.db.query(Order).filter(Order.consumer_id == user_id, Order.payment_status == OrderPaymentStatus.PAID).all()
         
         stats = {
             "total_orders": len(orders),
@@ -405,7 +419,7 @@ class OrderService:
 
         # Seller side: orders placed for this user's products (farmers)
         sales = self.db.query(Order).join(Product, Order.product_id == Product.id).filter(
-            Product.farmer_id == user_id
+            Product.farmer_id == user_id, Order.payment_status == OrderPaymentStatus.PAID
         ).all()
         stats["sales"] = {
             "total_orders": len(sales),

@@ -75,6 +75,7 @@ def test_confirm_delivery_credits_wallet(db_session):
         total_price=2000.0,
         delivery_address="123 Sample Street",
         status=OrderStatus.AWAITING_CONFIRMATION,
+        payment_status="paid",
     )
     db_session.add(order)
     db_session.commit()

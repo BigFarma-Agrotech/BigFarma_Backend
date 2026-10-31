@@ -13,8 +13,32 @@ from features.marketplace.models import Product, ProductCategory, AvailabilitySt
 from services.email_service import email_service
 
 
+paystack_state = {"transactions": {}, "status": "success", "amount_offset": 0}
+
+CALLBACK = "http://localhost:5173/payment-processing"
+
+
+def checkout(client, current, consumer_id, product_id, quantity=2, delivery_option="door-delivery"):
+    current["user_id"] = consumer_id
+    return client.post("/api/v1/payments/checkout", json={
+        "items": [{"product_id": product_id, "quantity": quantity}],
+        "delivery_address": "12 Farm Rd, Lekki", "contact_name": "Ada Obi", "contact_phone": "08011112222",
+        "delivery_option": delivery_option, "callback_url": CALLBACK,
+    })
+
+
+def buy(client, current, consumer_id, product_id, quantity=2):
+    """Check out and pay (fake Paystack); returns the paid order's public id."""
+    res = checkout(client, current, consumer_id, product_id, quantity)
+    assert res.status_code == 201, res.text
+    paid = client.get(f"/api/v1/payments/verify/{res.json()['reference']}")
+    assert paid.status_code == 200 and paid.json()["status"] == "success", paid.text
+    return paid.json()["orders"][0]["public_id"]
+
+
 @pytest.fixture()
 def env(monkeypatch):
+    paystack_state.update(transactions={}, status="success", amount_offset=0)
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
@@ -36,6 +60,21 @@ def env(monkeypatch):
         sent.append((to_email, subject))
         return True
     monkeypatch.setattr(email_service, "send_email", fake_send)
+
+    # Stand in for Paystack: record initialized transactions; verify reports them
+    # with the status set in paystack_state (success by default) and the right amount
+    from config import settings
+    from features.payments import paystack
+    monkeypatch.setattr(settings, "PAYSTACK_SECRET_KEY", "sk_test_fake")
+    async def fake_initialize(email, amount_kobo, reference, callback_url, metadata):
+        paystack_state["transactions"][reference] = amount_kobo
+        return {"authorization_url": f"https://checkout.paystack.com/{reference}", "reference": reference}
+    async def fake_verify(reference):
+        return {"status": paystack_state["status"], "currency": "NGN",
+                "amount": paystack_state["transactions"][reference] + paystack_state["amount_offset"],
+                "gateway_response": "Approved"}
+    monkeypatch.setattr(paystack, "initialize_transaction", fake_initialize)
+    monkeypatch.setattr(paystack, "verify_transaction", fake_verify)
 
     current = {"user_id": consumer.id}
 
@@ -69,12 +108,10 @@ def env(monkeypatch):
 def test_order_flow_notifies_both_sides(env):
     client, current, farmer_id, consumer_id, product_id, sent = env
 
-    # Buyer places an order
-    res = client.post("/api/v1/orders/", json={"product_id": product_id, "quantity_ordered": "2",
-                                               "delivery_address": "12 Farm Rd (Contact: Ada Obi, 0801)"})
-    assert res.status_code == 201, res.text
-    order_id = res.json()["public_id"]
-    assert res.json()["total_price"] == 2400.0  # 2 x 1200, not the unit price
+    # Buyer checks out and pays
+    order_id = buy(client, current, consumer_id, product_id, quantity=2)
+    current["user_id"] = consumer_id
+    assert client.get("/api/v1/orders").json()[0]["total_price"] == 2400.0  # 2 x 1200, not the unit price
 
     # Farmer sees it on the farm orders endpoint and has a notification
     current["user_id"] = farmer_id
@@ -114,19 +151,16 @@ def test_order_flow_notifies_both_sides(env):
     assert types[0] == "delivery_confirmed"
 
 
-def test_order_rejects_non_numeric_quantity(env):
-    client, _, _, _, product_id, _ = env
-    res = client.post("/api/v1/orders/", json={"product_id": product_id, "quantity_ordered": "lots",
-                                               "delivery_address": "12 Farm Rd"})
-    assert res.status_code == 400
+def test_checkout_rejects_bad_quantity(env):
+    client, current, _, consumer_id, product_id, _ = env
+    assert checkout(client, current, consumer_id, product_id, quantity=0).status_code == 422
+    assert checkout(client, current, consumer_id, product_id, quantity="lots").status_code == 422
 
 
 def test_list_routes_answer_without_trailing_slash(env):
     # The frontend calls these without the slash so Vercel's rewrite can proxy them
     client, current, farmer_id, consumer_id, product_id, _ = env
-    res = client.post("/api/v1/orders", json={"product_id": product_id, "quantity_ordered": "1",
-                                              "delivery_address": "12 Farm Rd, Lekki"}, follow_redirects=False)
-    assert res.status_code == 201, res.text
+    buy(client, current, consumer_id, product_id, quantity=1)
     for path in ["/api/v1/orders", "/api/v1/orders/", "/api/v1/notifications", "/api/v1/notifications/"]:
         res = client.get(path, follow_redirects=False)
         assert res.status_code == 200, (path, res.status_code)
@@ -141,8 +175,7 @@ def test_delete_clear_and_expiry(env):
 
     client, current, farmer_id, consumer_id, product_id, _ = env
     for _ in range(3):
-        client.post("/api/v1/orders", json={"product_id": product_id, "quantity_ordered": "1",
-                                            "delivery_address": "12 Farm Rd, Lekki"})
+        buy(client, current, consumer_id, product_id, quantity=1)
     current["user_id"] = farmer_id
     notes = client.get("/api/v1/notifications").json()
     assert len(notes) == 3

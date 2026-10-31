@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
 
-from features.marketplace.models import Product, Order, Review, AvailabilityStatus, OrderStatus, ProductCategory
+from features.marketplace.models import Product, Order, Review, AvailabilityStatus, OrderStatus, ProductCategory, OrderPaymentStatus
 from features.marketplace.schemas import ProductCreate, ProductUpdate, OrderCreate, ReviewCreate
 from features.users.models import FarmerProfile
 
@@ -245,7 +245,9 @@ class MarketplaceService:
         return order
 
     def get_user_orders(self, user_id: int) -> List[Order]:
-        return self.db.query(Order).filter(Order.consumer_id == user_id).order_by(Order.created_at.desc()).all()
+        return self.db.query(Order).filter(
+            Order.consumer_id == user_id, Order.payment_status == OrderPaymentStatus.PAID
+        ).order_by(Order.created_at.desc()).all()
 
     def update_order_status(self, order_id: int, status: OrderStatus) -> Optional[Order]:
         order = self.db.query(Order).filter(Order.id == order_id).first()

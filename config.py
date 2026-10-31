@@ -33,6 +33,18 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: Optional[str] = None
     TWILIO_PHONE_NUMBER: Optional[str] = None
 
+    # Paystack (checkout payments). Use the sk_test_... key until going live.
+    PAYSTACK_SECRET_KEY: Optional[str] = None
+    PAYSTACK_BASE_URL: str = "https://api.paystack.co"
+    # Charged on top of the items at checkout (delivery only for door delivery)
+    CHECKOUT_DELIVERY_FEE: float = 1500.0
+    CHECKOUT_TAX_RATE: float = 0.075
+    # Hosts Paystack may send the buyer back to after paying (comma-separated)
+    PAYMENT_CALLBACK_HOSTS: str = (
+        "bigfarma.ng,www.bigfarma.ng,big-farma-frontend.vercel.app,"
+        "big-farma-frontend-omega.vercel.app,localhost,127.0.0.1"
+    )
+
     # Notifications older than this are deleted automatically
     NOTIFICATION_RETENTION_DAYS: int = 30
 

@@ -1,15 +1,11 @@
 """Farmer orders dashboard: per-product order lists, order detail with buyer contact, and status rules."""
 from features.marketplace.models import Product, ProductCategory, AvailabilityStatus
-from tests.test_order_notifications_api import env  # noqa: F401  (pytest fixture)
+from tests.test_order_notifications_api import env, buy  # noqa: F401  (env is a pytest fixture)
 
 
-def _place_order(client, current, consumer_id, product_id, address="12 Farm Rd, Lekki"):
-    current["user_id"] = consumer_id
-    res = client.post("/api/v1/orders/", json={"product_id": product_id, "quantity_ordered": "2",
-                                               "delivery_address": address})
-    assert res.status_code == 201, res.text
-    # URLs take the random public id, never the integer one
-    return res.json()["public_id"]
+def _place_order(client, current, consumer_id, product_id, address=None):
+    # Checks out and pays through the fake Paystack; URLs take the random public id
+    return buy(client, current, consumer_id, product_id, quantity=2)
 
 
 DESCRIPTION = "Freshly harvested this week"
@@ -75,15 +71,17 @@ def test_orders_filter_by_product_and_products_carry_order_counts(env):
 
 def test_farmer_order_detail_includes_buyer_contact(env):
     client, current, farmer_id, consumer_id, product_id, _ = env
-    order_id = _place_order(client, current, consumer_id, product_id, address="Lekki Phase 1, Lagos")
+    order_id = _place_order(client, current, consumer_id, product_id)
 
     current["user_id"] = farmer_id
     res = client.get(f"/api/v1/orders/farmer/orders/{order_id}")
     assert res.status_code == 200, res.text
     order = res.json()
     assert order["public_id"] == order_id
-    assert order["delivery_address"] == "Lekki Phase 1, Lagos"
-    assert "customer_name" in order and "customer_phone" in order
+    # Checkout puts the contact on the address and the phone on the order
+    assert order["delivery_address"] == "12 Farm Rd, Lekki (Contact: Ada Obi, 08011112222)"
+    assert order["customer_phone"] == "08011112222"
+    assert "customer_name" in order
 
     assert client.get("/api/v1/orders/farmer/orders/999999").status_code == 404
 
