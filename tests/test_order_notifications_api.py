@@ -85,6 +85,8 @@ def test_order_flow_notifies_both_sides(env):
     # Carries the order's public ids so the app can link straight to it
     assert farmer_notes[0]["reference_public_id"] == order_id
     assert farmer_notes[0]["product_public_id"] == farm["items"][0]["product_public_id"]
+    # Times carry their UTC offset so clients don't read them as local time
+    assert farmer_notes[0]["created_at"].endswith("+00:00")
     assert client.get("/api/v1/notifications/unread-count").json() == {"unread_count": 1}
 
     # Marking it read returns the same links
