@@ -23,6 +23,10 @@ class Notification(Base):
     message = Column(Text, nullable=False)
     # Optional pointer to the thing the notification is about, e.g. an order id
     reference_id = Column(Integer, nullable=True)
+    # Not stored: filled in by NotificationService.with_references so the client
+    # can link to the order by its public ids
+    reference_public_id = None
+    product_public_id = None
 
     is_read = Column(Boolean, default=False, nullable=False)
     read_at = Column(DateTime(timezone=True), nullable=True)

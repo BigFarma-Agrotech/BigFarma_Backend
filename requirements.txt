@@ -1,6 +1,8 @@
 # FastAPI and ASGI server
 fastapi
 uvicorn
+# uvicorn needs this to accept WebSocket connections (e.g. /notifications/ws)
+websockets
 
 # Database
 sqlalchemy
@@ -29,7 +31,7 @@ aiofiles
 # Logging
 structlog
 
-# Real-time features (WebSocket support included in FastAPI)
+# Real-time features (WebSockets need the `websockets` package above)
 # python-socketio  # Optional: for more advanced WebSocket features
 # redis  # Optional: for scaling WebSocket connections across multiple servers
 

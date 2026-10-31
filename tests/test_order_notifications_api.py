@@ -82,7 +82,14 @@ def test_order_flow_notifies_both_sides(env):
     assert [o["public_id"] for o in farm["items"]] == [order_id]
     farmer_notes = client.get("/api/v1/notifications/").json()
     assert [n["notification_type"] for n in farmer_notes] == ["new_order"]
+    # Carries the order's public ids so the app can link straight to it
+    assert farmer_notes[0]["reference_public_id"] == order_id
+    assert farmer_notes[0]["product_public_id"] == farm["items"][0]["product_public_id"]
     assert client.get("/api/v1/notifications/unread-count").json() == {"unread_count": 1}
+
+    # Marking it read returns the same links
+    read = client.patch(f"/api/v1/notifications/{farmer_notes[0]['id']}/read").json()
+    assert read["is_read"] and read["reference_public_id"] == order_id
 
     # Both emails went out: confirmation to buyer, new-order alert to farmer
     recipients = {to for to, _ in sent}

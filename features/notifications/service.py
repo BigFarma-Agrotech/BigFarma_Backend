@@ -6,7 +6,7 @@ from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
 from features.auth.models import User
-from features.marketplace.models import Order, OrderStatus
+from features.marketplace.models import Order, OrderStatus, Product
 from features.notifications.connection_manager import notification_manager
 from features.notifications.models import Notification, NotificationType
 from features.notifications.schemas import NotificationResponse
@@ -44,12 +44,34 @@ class NotificationService:
         self.db.refresh(notification)
         return notification
 
+    def with_references(self, notifications: List[Notification]) -> List[Notification]:
+        """Fill in the public ids of the orders the notifications point at (one query)."""
+        order_ids = {
+            n.reference_id for n in notifications
+            if n.reference_id is not None and n.notification_type != NotificationType.LOGIN_ALERT.value
+        }
+        if not order_ids:
+            return notifications
+        rows = (
+            self.db.query(Order.id, Order.public_id, Product.public_id)
+            .join(Product, Order.product_id == Product.id)
+            .filter(Order.id.in_(order_ids))
+            .all()
+        )
+        public_ids = {order_id: (order_public_id, product_public_id)
+                      for order_id, order_public_id, product_public_id in rows}
+        for n in notifications:
+            if n.notification_type != NotificationType.LOGIN_ALERT.value and n.reference_id in public_ids:
+                n.reference_public_id, n.product_public_id = public_ids[n.reference_id]
+        return notifications
+
     def get_user_notifications(self, user_id: int, unread_only: bool = False,
                                skip: int = 0, limit: int = 50) -> List[Notification]:
         query = self.db.query(Notification).filter(Notification.user_id == user_id)
         if unread_only:
             query = query.filter(Notification.is_read.is_(False))
-        return query.order_by(Notification.created_at.desc(), Notification.id.desc()).offset(skip).limit(limit).all()
+        notifications = query.order_by(Notification.created_at.desc(), Notification.id.desc()).offset(skip).limit(limit).all()
+        return self.with_references(notifications)
 
     def get_unread_count(self, user_id: int) -> int:
         return self.db.query(Notification).filter(
@@ -69,7 +91,7 @@ class NotificationService:
             notification.read_at = datetime.now(timezone.utc)
             self.db.commit()
             self.db.refresh(notification)
-        return notification
+        return self.with_references([notification])[0]
 
     def mark_all_as_read(self, user_id: int) -> int:
         updated = self.db.query(Notification).filter(
@@ -81,6 +103,7 @@ class NotificationService:
 
     def push_notification(self, notification: Notification, background_tasks: BackgroundTasks) -> None:
         """Queue a real-time push of a new notification plus the updated unread count."""
+        self.with_references([notification])
         background_tasks.add_task(notification_manager.send_to_user, notification.user_id, {
             "type": "notification",
             "data": NotificationResponse.model_validate(notification).model_dump(mode="json"),
