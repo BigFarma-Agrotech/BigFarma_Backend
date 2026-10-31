@@ -119,3 +119,15 @@ def test_order_rejects_non_numeric_quantity(env):
     res = client.post("/api/v1/orders/", json={"product_id": product_id, "quantity_ordered": "lots",
                                                "delivery_address": "12 Farm Rd"})
     assert res.status_code == 400
+
+
+def test_list_routes_answer_without_trailing_slash(env):
+    # The frontend calls these without the slash so Vercel's rewrite can proxy them
+    client, current, farmer_id, consumer_id, product_id, _ = env
+    res = client.post("/api/v1/orders", json={"product_id": product_id, "quantity_ordered": "1",
+                                              "delivery_address": "12 Farm Rd, Lekki"}, follow_redirects=False)
+    assert res.status_code == 201, res.text
+    for path in ["/api/v1/orders", "/api/v1/orders/", "/api/v1/notifications", "/api/v1/notifications/"]:
+        res = client.get(path, follow_redirects=False)
+        assert res.status_code == 200, (path, res.status_code)
+        assert isinstance(res.json(), list)

@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
+# Also served without the trailing slash: Vercel's /api/v1/:path* rewrite drops
+# "/notifications/"-style URLs, and the slash redirect points at the backend host (CORS-blocked)
+@router.get("", response_model=List[NotificationResponse], include_in_schema=False)
 @router.get("/", response_model=List[NotificationResponse])
 async def get_my_notifications(
     unread_only: bool = Query(False),

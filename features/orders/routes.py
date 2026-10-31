@@ -54,6 +54,9 @@ def _farmer_order_response(order: Order, farmer_profile: Optional[FarmerProfile]
     )
 
 
+# Also served without the trailing slash: Vercel's /api/v1/:path* rewrite drops
+# "/notifications/"-style URLs, and the slash redirect points at the backend host (CORS-blocked)
+@router.post("", response_model=OrderDetailResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 @router.post("/", response_model=OrderDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_order(
     order_data: OrderCreate,
@@ -98,6 +101,7 @@ async def create_order(
         product_images=product_images,
     )
 
+@router.get("", response_model=List[OrderDetailResponse], include_in_schema=False)
 @router.get("/", response_model=List[OrderDetailResponse])
 async def get_my_orders(
     status: Optional[str] = Query(None, description="Filter by order status"),
