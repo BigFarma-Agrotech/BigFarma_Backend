@@ -22,7 +22,8 @@ from features.marketplace.models import (
 )
 from features.marketplace.schemas import OrderCreate
 from features.notifications.service import NotificationService
-from features.orders.service import OrderService
+from features.orders.service import OrderService, order_quantity_problem
+from utils.units import format_quantity
 from features.payments import paystack
 from features.payments.schemas import CheckoutRequest, PaymentOrder, PaymentResponse
 
@@ -107,6 +108,12 @@ class PaymentService:
         if unavailable:
             raise CheckoutError(f"No longer available: {', '.join(unavailable)}. Remove it from your cart to continue.")
 
+        # Minimum order, stock and whole units (bags, head, ...) per product
+        problems = [order_quantity_problem(products[item.product_id], item.quantity) for item in data.items]
+        problems = [p for p in problems if p]
+        if problems:
+            raise CheckoutError(". ".join(problems) + ". Update your cart to continue.")
+
         delivery_address = f"{data.delivery_address} (Contact: {data.contact_name}, {data.contact_phone})"
         if data.delivery_option == "pickup":
             delivery_address = f"Pickup - {delivery_address}"
@@ -124,7 +131,8 @@ class PaymentService:
         order_service = OrderService(self.db)
         orders: List[Order] = []
         for item in data.items:
-            quantity = f"{item.quantity:g}"
+            # Stored with the unit so the farmer sees "5 kg", not "5"
+            quantity = format_quantity(item.quantity, products[item.product_id].unit)
             order = order_service.create_order(
                 user.id,
                 OrderCreate(product_id=item.product_id, quantity_ordered=quantity, delivery_address=delivery_address),

@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 import uuid
 
 # Import models from marketplace (existing) and orders (new)
+from utils.units import format_quantity, is_count_unit
 from features.marketplace.models import Order, Product, OrderStatus, AvailabilityStatus, OrderPaymentStatus
 from features.orders.models import OrderTimeline, OrderIssue, OrderTimelineStatus, IssueStatus
 from features.orders.schemas import (
@@ -33,6 +34,20 @@ class InvalidStatusTransition(ValueError):
     """Raised when a farmer tries to move an order to a status they can't set from its current one."""
 
 
+def order_quantity_problem(product: Product, units: float) -> Optional[str]:
+    """Why `units` of the product can't be ordered (minimum, stock, whole units), or None."""
+    unit = product.unit or ""
+    minimum = product.min_order_quantity or 1
+    if is_count_unit(product.unit) and not float(units).is_integer():
+        return f"{product.name} is sold in whole {unit or 'units'}"
+    if units + 1e-9 < minimum:
+        return f"The minimum order for {product.name} is {format_quantity(minimum, product.unit)}"
+    stock = product.available_quantity
+    if stock is not None and units > stock + 1e-9:
+        return f"Only {format_quantity(stock, product.unit)} of {product.name} is available"
+    return None
+
+
 class OrderService:
     def __init__(self, db: Session):
         self.db = db
@@ -52,6 +67,9 @@ class OrderService:
         units = self._parse_units(order_data.quantity_ordered)
         if units is None:
             logger.warning("Invalid quantity %r for product %s", order_data.quantity_ordered, order_data.product_id)
+            return None
+        if order_quantity_problem(product, units):
+            logger.warning("Quantity %s breaks the order rules for product %s", units, order_data.product_id)
             return None
 
         from datetime import datetime

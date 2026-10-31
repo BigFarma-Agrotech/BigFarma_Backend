@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
 from utils.public_id import generate_public_id
+from utils.units import parse_quantity
 import enum
 
 class ProductCategory(str, enum.Enum):
@@ -40,7 +41,11 @@ class Product(Base):
     name = Column(String, nullable=False)
     category = Column(Enum(ProductCategory), nullable=False)
     description = Column(Text, nullable=True)
-    quantity = Column(String, nullable=False)
+    quantity = Column(String, nullable=False)  # stock with its unit, e.g. "100 kg"
+    # The unit the product is priced and sold in ("kg", "bag", "head", ...)
+    unit = Column(String, nullable=True)
+    # The least a buyer may order, in `unit`
+    min_order_quantity = Column(Float, nullable=False, default=1.0, server_default="1")
     price = Column(Float, nullable=False)
     discount_percentage = Column(Float, default=0.0)
     location = Column(String, nullable=False)
@@ -58,6 +63,11 @@ class Product(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
+    @property
+    def available_quantity(self):
+        """Stock as a number (None if `quantity` doesn't start with one)."""
+        return parse_quantity(self.quantity)[0]
+
     # Relationships
     farmer = relationship("User", back_populates="products")
     orders = relationship("Order", back_populates="product")

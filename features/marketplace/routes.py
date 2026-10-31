@@ -56,6 +56,8 @@ async def get_all_products(
             category=product.category,
             description=product.description or "",
             quantity=product.quantity,
+            unit=product.unit,
+            min_order_quantity=product.min_order_quantity or 1.0,
             price=product.price,
             discount_percentage=product.discount_percentage or 0.0,
             discounted_price=discounted_price,
@@ -133,6 +135,8 @@ async def get_product_detail(product_id: str, db: Session = Depends(get_db)):
         category=product.category,
         description=product.description or "",
         quantity=product.quantity,
+        unit=product.unit,
+        min_order_quantity=product.min_order_quantity or 1.0,
         price=product.price,
         discount_percentage=product.discount_percentage or 0.0,
         location=product.location,
@@ -185,6 +189,8 @@ async def create_product(
             category=product.category,
             description=product.description or "",
             quantity=product.quantity,
+            unit=product.unit,
+            min_order_quantity=product.min_order_quantity or 1.0,
             price=product.price,
             discount_percentage=product.discount_percentage or 0.0,
             location=product.location,
@@ -244,6 +250,8 @@ async def get_my_products(
             category=product.category,
             description=product.description or "",
             quantity=product.quantity,
+            unit=product.unit,
+            min_order_quantity=product.min_order_quantity or 1.0,
             price=product.price,
             discount_percentage=product.discount_percentage or 0.0,
             location=product.location,
@@ -273,7 +281,10 @@ async def update_product(
         raise HTTPException(status_code=403, detail="Only farmers can update products")
     
     service = MarketplaceService(db)
-    product = service.update_product(product_id, current_user.id, product_data)
+    try:
+        product = service.update_product(product_id, current_user.id, product_data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     
@@ -293,6 +304,8 @@ async def update_product(
         category=product.category,
         description=product.description or "",
         quantity=product.quantity,
+        unit=product.unit,
+        min_order_quantity=product.min_order_quantity or 1.0,
         price=product.price,
         discount_percentage=product.discount_percentage or 0.0,
         location=product.location,

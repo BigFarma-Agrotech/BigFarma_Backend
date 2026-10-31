@@ -48,7 +48,9 @@ async def get_available_products_for_group_buy(
                 "price": product.price,
                 "category": product.category,
                 "location": product.location,
-                "quantity": product.quantity
+                "quantity": product.quantity,
+                "unit": product.unit,
+                "min_order_quantity": product.min_order_quantity or 1.0,
             }
             for product in products
         ]

@@ -3,6 +3,7 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
 
+from utils.units import is_count_unit, parse_quantity
 from features.marketplace.models import Product, Order, Review, AvailabilityStatus, OrderStatus, ProductCategory, OrderPaymentStatus
 from features.marketplace.schemas import ProductCreate, ProductUpdate, OrderCreate, ReviewCreate
 from features.users.models import FarmerProfile
@@ -43,16 +44,9 @@ class MarketplaceService:
         # Convert images list to comma-separated string
         images_str = ",".join(product_data.images)
         
-        # Set default availability based on quantity
-        availability = AvailabilityStatus.IN_STOCK
-        if product_data.quantity:
-            try:
-                # Extract numeric value from quantity string (e.g., "10 kg" -> 10)
-                quantity_value = int(''.join(filter(str.isdigit, product_data.quantity.split()[0])))
-                if quantity_value <= 0:
-                    availability = AvailabilityStatus.OUT_OF_STOCK
-            except (ValueError, IndexError):
-                availability = AvailabilityStatus.IN_STOCK
+        # Out of stock when the quantity is zero (e.g. "0 kg")
+        stock, _ = parse_quantity(product_data.quantity)
+        availability = AvailabilityStatus.OUT_OF_STOCK if stock is not None and stock <= 0 else AvailabilityStatus.IN_STOCK
         
         product = Product(
             farmer_id=farmer_id,
@@ -60,6 +54,8 @@ class MarketplaceService:
             category=product_data.category,
             description=product_data.description,
             quantity=product_data.quantity,
+            unit=product_data.unit,
+            min_order_quantity=product_data.min_order_quantity,
             price=product_data.price,
             discount_percentage=product_data.discount_percentage or 0.0,
             location=product_data.location,
@@ -90,11 +86,23 @@ class MarketplaceService:
         
         # Update availability if quantity changes
         if 'quantity' in update_dict and update_dict['quantity']:
-            try:
-                quantity_value = int(''.join(filter(str.isdigit, update_dict['quantity'].split()[0])))
-                update_dict['availability'] = AvailabilityStatus.IN_STOCK if quantity_value > 0 else AvailabilityStatus.OUT_OF_STOCK
-            except (ValueError, IndexError):
-                update_dict['availability'] = AvailabilityStatus.IN_STOCK
+            stock, stock_unit = parse_quantity(update_dict['quantity'])
+            update_dict['availability'] = (
+                AvailabilityStatus.OUT_OF_STOCK if stock is not None and stock <= 0 else AvailabilityStatus.IN_STOCK
+            )
+            if not update_dict.get('unit'):
+                update_dict['unit'] = stock_unit or product.unit
+
+        # When the farmer sets the minimum order (or the unit), it has to fit the
+        # product as it will be after the update. Restocking alone is never blocked.
+        if 'min_order_quantity' in update_dict or 'unit' in update_data.model_fields_set:
+            min_order = update_dict.get('min_order_quantity') or product.min_order_quantity or 1
+            unit = update_dict.get('unit') or product.unit
+            stock, _ = parse_quantity(update_dict.get('quantity') or product.quantity)
+            if is_count_unit(unit) and not float(min_order).is_integer():
+                raise ValueError(f"Minimum order must be a whole number of {unit}")
+            if stock is not None and stock > 0 and min_order > stock:
+                raise ValueError("Minimum order can't be more than the quantity in stock")
         
         for key, value in update_dict.items():
             setattr(product, key, value)

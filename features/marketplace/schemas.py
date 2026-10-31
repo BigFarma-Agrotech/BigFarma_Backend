@@ -1,5 +1,7 @@
-from pydantic import BaseModel, field_validator, ConfigDict
+from pydantic import BaseModel, field_validator, ConfigDict, model_validator
 from typing import Optional, List, Dict
+
+from utils.units import is_count_unit, normalize_unit, parse_quantity
 from datetime import datetime
 from enum import Enum
 
@@ -26,6 +28,9 @@ class ProductBase(BaseModel):
     category: ProductCategory
     description: str
     quantity: str
+    # Sold per `unit`; buyers must order at least `min_order_quantity` of it
+    unit: Optional[str] = None
+    min_order_quantity: float = 1.0
     price: float
     discount_percentage: float = 0.0
     location: str
@@ -66,8 +71,26 @@ class ProductBase(BaseModel):
             raise ValueError('At least one image is required')
         return v
 
+def _check_order_rules(quantity, unit, min_order_quantity):
+    """Shared by create/update: returns the normalized unit, or raises ValueError."""
+    stock, stock_unit = parse_quantity(quantity)
+    unit = normalize_unit(unit) or stock_unit
+    if min_order_quantity is not None:
+        if min_order_quantity <= 0:
+            raise ValueError("Minimum order must be greater than 0")
+        if is_count_unit(unit) and not float(min_order_quantity).is_integer():
+            raise ValueError(f"Minimum order must be a whole number of {unit}")
+        if stock is not None and stock > 0 and min_order_quantity > stock:
+            raise ValueError("Minimum order can't be more than the quantity in stock")
+    return unit
+
+
 class ProductCreate(ProductBase):
-    pass
+    @model_validator(mode="after")
+    def order_rules(self):
+        # The unit defaults to the one in the quantity ("100 kg" -> "kg")
+        self.unit = _check_order_rules(self.quantity, self.unit, self.min_order_quantity)
+        return self
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
@@ -79,6 +102,18 @@ class ProductUpdate(BaseModel):
     location: Optional[str] = None
     images: Optional[List[str]] = None
     is_listed: Optional[bool] = None
+    unit: Optional[str] = None
+    min_order_quantity: Optional[float] = None
+
+    @model_validator(mode="after")
+    def order_rules(self):
+        # Checks against the stored product happen in the service; these catch
+        # what can be judged from the update alone
+        if self.unit is not None or self.min_order_quantity is not None:
+            unit = _check_order_rules(self.quantity, self.unit, self.min_order_quantity)
+            if self.unit is not None:
+                self.unit = unit
+        return self
 
     @field_validator('name', 'description')
     @classmethod
@@ -139,6 +174,8 @@ class ProductDetailResponse(ProductResponse):
 class ProductPublicResponse(BaseModel):
     id: int
     public_id: str
+    unit: Optional[str] = None
+    min_order_quantity: float = 1.0
     name: str
     category: ProductCategory
     description: str
