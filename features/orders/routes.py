@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import date
@@ -16,6 +16,7 @@ from features.marketplace.models import Order, Product, OrderStatus
 from features.users.models import FarmerProfile
 from features.auth.models import User, UserCategory
 from utils.helpers import split_images
+from utils.public_id import resolve_id
 from core.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
@@ -29,9 +30,11 @@ def _farmer_order_response(order: Order, farmer_profile: Optional[FarmerProfile]
 
     return FarmerOrderResponse(
         id=order.id,
+        public_id=order.public_id,
         order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
         consumer_id=order.consumer_id,
         product_id=order.product_id,
+        product_public_id=order.product_public_id,
         quantity_ordered=order.quantity_ordered,
         total_price=order.total_price,
         delivery_address=order.delivery_address,
@@ -75,9 +78,11 @@ async def create_order(
 
     return OrderDetailResponse(
         id=order.id,
+        public_id=order.public_id,
         order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
         consumer_id=order.consumer_id,
         product_id=order.product_id,
+        product_public_id=order.product_public_id,
         quantity_ordered=order.quantity_ordered,
         total_price=order.total_price,
         delivery_address=order.delivery_address,
@@ -121,9 +126,11 @@ async def get_my_orders(
         
         order_response = OrderDetailResponse(
             id=order.id,
+            public_id=order.public_id,
             order_number=order.order_number if order.order_number else f"BF{order.id:06d}",  # Ensure never None
             consumer_id=order.consumer_id,
             product_id=order.product_id,
+            product_public_id=order.product_public_id,
             quantity_ordered=order.quantity_ordered,
             total_price=order.total_price,
             delivery_address=order.delivery_address,
@@ -149,7 +156,7 @@ async def get_farmer_orders(
     date_from: Optional[date] = Query(None, description="Orders placed on or after this date (YYYY-MM-DD)"),
     date_to: Optional[date] = Query(None, description="Orders placed on or before this date (YYYY-MM-DD)"),
     search: Optional[str] = Query(None, description="Search by order number, product name, or customer name"),
-    product_id: Optional[int] = Query(None, description="Only orders for this product"),
+    product_id: Optional[str] = Query(None, description="Only orders for this product (its public id)"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -160,6 +167,9 @@ async def get_farmer_orders(
         raise HTTPException(status_code=403, detail="Only farmers can view farm orders")
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=400, detail="date_from must be on or before date_to")
+
+    if product_id is not None:
+        product_id = resolve_id(db, Product, product_id, "Product")
 
     service = OrderService(db)
     orders, total = service.get_farmer_orders(
@@ -174,11 +184,12 @@ async def get_farmer_orders(
 
 @router.get("/farmer/orders/{order_id}", response_model=FarmerOrderResponse)
 async def get_farmer_order(
-    order_id: int,
+    order_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """One order for the current farmer's products, with the buyer's contact details."""
+    order_id = resolve_id(db, Order, order_id, "Order")
     if current_user.category != UserCategory.FARMER:
         raise HTTPException(status_code=403, detail="Only farmers can view farm orders")
 
@@ -191,11 +202,12 @@ async def get_farmer_order(
 
 @router.get("/{order_id}", response_model=OrderWithDetailsResponse)
 async def get_order_details(
-    order_id: int,
+    order_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Get detailed information for a specific order including timeline and issues"""
+    order_id = resolve_id(db, Order, order_id, "Order")
     service = OrderService(db)
     
     # Get order details
@@ -241,9 +253,11 @@ async def get_order_details(
     
     return OrderWithDetailsResponse(
         id=order.id,
+        public_id=order.public_id,
         order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
         consumer_id=order.consumer_id,
         product_id=order.product_id,
+        product_public_id=order.product_public_id,
         quantity_ordered=order.quantity_ordered,
         total_price=order.total_price,
         delivery_address=order.delivery_address,
@@ -263,13 +277,14 @@ async def get_order_details(
 
 @router.post("/{order_id}/report-issue", response_model=OrderIssueResponse)
 async def report_delivery_issue(
-    order_id: int,
+    order_id: str,
     issue_data: OrderIssueCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Report a delivery issue for an order"""
+    order_id = resolve_id(db, Order, order_id, "Order")
     service = OrderService(db)
     
     issue = service.report_delivery_issue(order_id, current_user.id, issue_data)
@@ -294,12 +309,13 @@ async def report_delivery_issue(
 
 @router.post("/{order_id}/confirm-delivery", response_model=OrderDetailResponse)
 async def confirm_delivery(
-    order_id: int,
+    order_id: str,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Confirm that you have received your order"""
+    order_id = resolve_id(db, Order, order_id, "Order")
     service = OrderService(db)
     
     order = service.confirm_delivery(order_id, current_user.id)
@@ -318,9 +334,11 @@ async def confirm_delivery(
     
     return OrderDetailResponse(
         id=order.id,
+        public_id=order.public_id,
         order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
         consumer_id=order.consumer_id,
         product_id=order.product_id,
+        product_public_id=order.product_public_id,
         quantity_ordered=order.quantity_ordered,
         total_price=order.total_price,
         delivery_address=order.delivery_address,
@@ -338,11 +356,12 @@ async def confirm_delivery(
 
 @router.get("/{order_id}/timeline", response_model=List[OrderTimelineResponse])
 async def get_order_timeline(
-    order_id: int,
+    order_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Get the timeline for a specific order"""
+    order_id = resolve_id(db, Order, order_id, "Order")
     service = OrderService(db)
     
     timeline = service.get_order_timeline(order_id, current_user.id)
@@ -361,11 +380,12 @@ async def get_order_timeline(
 
 @router.get("/{order_id}/issues", response_model=List[OrderIssueResponse])
 async def get_order_issues(
-    order_id: int,
+    order_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Get all issues reported for a specific order"""
+    order_id = resolve_id(db, Order, order_id, "Order")
     service = OrderService(db)
     
     issues = service.get_order_issues(order_id, current_user.id)
@@ -399,13 +419,14 @@ async def get_order_statistics(
 # Admin/Farmer routes (for managing orders)
 @router.put("/{order_id}/status", response_model=OrderDetailResponse)
 async def update_order_status(
-    order_id: int,
+    order_id: str,
     status_update: OrderStatusUpdate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Update order status (for farmers/admin)"""
+    order_id = resolve_id(db, Order, order_id, "Order")
     if current_user.category not in ["farmer", "admin"]:
         raise HTTPException(
             status_code=403,
@@ -432,9 +453,11 @@ async def update_order_status(
     
     return OrderDetailResponse(
         id=order.id,
+        public_id=order.public_id,
         order_number=order.order_number if order.order_number else f"BF{order.id:06d}",
         consumer_id=order.consumer_id,
         product_id=order.product_id,
+        product_public_id=order.product_public_id,
         quantity_ordered=order.quantity_ordered,
         total_price=order.total_price,
         delivery_address=order.delivery_address,

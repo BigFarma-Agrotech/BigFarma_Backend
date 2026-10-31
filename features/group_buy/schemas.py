@@ -91,6 +91,8 @@ class GroupBuyUpdate(BaseModel):
 
 class GroupBuyResponse(GroupBuyBase):
     id: int
+    public_id: str
+    product_public_id: Optional[str] = None
     shareable_link: str
     creator_id: int
     status: GroupStatusEnum
@@ -244,6 +246,7 @@ class GroupDiscoveryRequest(BaseModel):
 
 class GroupPublicResponse(BaseModel):
     id: int
+    public_id: str
     group_name: str
     group_description: Optional[str]
     group_location: str

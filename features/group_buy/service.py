@@ -254,11 +254,13 @@ class GroupBuyService:
         
         return {
             "id": group.id,
+            "public_id": group.public_id,
             "group_name": group.group_name,
             "group_description": group.group_description,
             "group_location": group.group_location,
             "shareable_link": group.shareable_link,
             "product_id": group.product_id,
+            "product_public_id": group.product.public_id,
             "target_quantity": group.target_quantity,
             "target_quantity_numeric": group.target_quantity_numeric,
             "quantity_unit": group.quantity_unit,
@@ -277,6 +279,7 @@ class GroupBuyService:
             "locked_at": group.locked_at,
             "product": {
                 "id": group.product.id,
+                "public_id": group.product.public_id,
                 "name": group.product.name,
                 "category": group.product.category,
                 "price": group.product.price,
@@ -519,6 +522,7 @@ class GroupBuyService:
         for group in groups:
             group_data = {
                 "id": group.id,
+                "public_id": group.public_id,
                 "group_name": group.group_name,
                 "group_description": group.group_description,
                 "group_location": group.group_location,
@@ -789,6 +793,7 @@ class GroupBuyService:
                 
                 group_data = GroupPublicResponse(
                     id=group.id,
+                    public_id=group.public_id,
                     group_name=group.group_name,
                     group_description=group.group_description,
                     group_location=group.group_location,
@@ -843,6 +848,7 @@ class GroupBuyService:
             return {
                 "group": {
                     "id": group.id,
+                    "public_id": group.public_id,
                     "group_name": group.group_name,
                     "group_description": group.group_description,
                     "group_location": group.group_location,
@@ -860,6 +866,7 @@ class GroupBuyService:
                 },
                 "product": {
                     "id": group.product.id,
+                    "public_id": group.product.public_id,
                     "name": group.product.name,
                     "category": group.product.category,
                     "price": group.product.price,

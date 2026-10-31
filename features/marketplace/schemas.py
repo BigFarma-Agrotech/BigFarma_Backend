@@ -1,5 +1,5 @@
 from pydantic import BaseModel, field_validator, ConfigDict
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 from enum import Enum
 
@@ -104,6 +104,7 @@ class ProductUpdate(BaseModel):
 
 class ProductResponse(ProductBase):
     id: int
+    public_id: str
     farmer_id: int
     is_approved: bool
     is_listed: bool
@@ -118,6 +119,8 @@ class ProductResponse(ProductBase):
 class FarmerProductResponse(ProductResponse):
     # Orders placed for this product, for the farmer's orders table
     order_count: int = 0
+    # The same orders by status, e.g. {"pending": 2, "delivered": 1}; statuses with none are left out
+    order_status_counts: Dict[str, int] = {}
 
 class FarmerInfo(BaseModel):
     id: int
@@ -135,6 +138,7 @@ class ProductDetailResponse(ProductResponse):
 
 class ProductPublicResponse(BaseModel):
     id: int
+    public_id: str
     name: str
     category: ProductCategory
     description: str
@@ -174,6 +178,8 @@ class OrderCreate(OrderBase):
 
 class OrderResponse(OrderBase):
     id: int
+    public_id: str
+    product_public_id: Optional[str] = None
     consumer_id: int
     total_price: float
     status: OrderStatus

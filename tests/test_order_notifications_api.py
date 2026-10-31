@@ -73,13 +73,13 @@ def test_order_flow_notifies_both_sides(env):
     res = client.post("/api/v1/orders/", json={"product_id": product_id, "quantity_ordered": "2",
                                                "delivery_address": "12 Farm Rd (Contact: Ada Obi, 0801)"})
     assert res.status_code == 201, res.text
-    order_id = res.json()["id"]
+    order_id = res.json()["public_id"]
     assert res.json()["total_price"] == 2400.0  # 2 x 1200, not the unit price
 
     # Farmer sees it on the farm orders endpoint and has a notification
     current["user_id"] = farmer_id
     farm = client.get("/api/v1/orders/farmer/orders").json()
-    assert [o["id"] for o in farm["items"]] == [order_id]
+    assert [o["public_id"] for o in farm["items"]] == [order_id]
     farmer_notes = client.get("/api/v1/notifications/").json()
     assert [n["notification_type"] for n in farmer_notes] == ["new_order"]
     assert client.get("/api/v1/notifications/unread-count").json() == {"unread_count": 1}

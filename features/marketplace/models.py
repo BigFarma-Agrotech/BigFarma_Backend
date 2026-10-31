@@ -2,6 +2,7 @@ from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, Enum, 
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
+from utils.public_id import generate_public_id
 import enum
 
 class ProductCategory(str, enum.Enum):
@@ -31,6 +32,8 @@ class Product(Base):
     __tablename__ = "products"
     
     id = Column(Integer, primary_key=True, index=True)
+    # Random ID used in URLs and the API instead of the guessable integer id
+    public_id = Column(String(8), unique=True, index=True, nullable=False, default=generate_public_id)
     farmer_id = Column(Integer, ForeignKey("users.id"))
     
     # Product details
@@ -64,6 +67,8 @@ class Order(Base):
     __tablename__ = "orders"
     
     id = Column(Integer, primary_key=True, index=True)
+    # Random ID used in URLs and the API instead of the guessable integer id
+    public_id = Column(String(8), unique=True, index=True, nullable=False, default=generate_public_id)
     product_id = Column(Integer, ForeignKey("products.id"))
     consumer_id = Column(Integer, ForeignKey("users.id"))
     
@@ -84,6 +89,10 @@ class Order(Base):
     # Relationships
     product = relationship("Product", back_populates="orders")
     consumer = relationship("User", back_populates="orders")
+
+    @property
+    def product_public_id(self):
+        return self.product.public_id if self.product else None
 
 class Review(Base):
     __tablename__ = "reviews"

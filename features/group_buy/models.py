@@ -2,6 +2,7 @@ from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, Enum, 
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
+from utils.public_id import generate_public_id
 import enum
 import uuid
 
@@ -21,6 +22,8 @@ class GroupBuy(Base):
     __tablename__ = "group_buys"
     
     id = Column(Integer, primary_key=True, index=True)
+    # Random ID used in URLs and the API instead of the guessable integer id
+    public_id = Column(String(8), unique=True, index=True, nullable=False, default=generate_public_id)
     
     # Group identification
     group_name = Column(String, nullable=False)
@@ -58,6 +61,10 @@ class GroupBuy(Base):
     # Relationships
     product = relationship("Product")
     creator = relationship("User", foreign_keys=[creator_id])
+
+    @property
+    def product_public_id(self):
+        return self.product.public_id if self.product else None
     members = relationship("GroupMember", back_populates="group", cascade="all, delete-orphan")
     transactions = relationship("GroupTransaction", back_populates="group", cascade="all, delete-orphan")
     chat = relationship("GroupChat", back_populates="group", uselist=False, cascade="all, delete-orphan")

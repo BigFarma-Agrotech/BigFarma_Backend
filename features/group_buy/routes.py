@@ -7,7 +7,9 @@ from database import get_db
 from core.dependencies import get_current_active_user
 from features.auth.models import User
 from features.marketplace.models import Product, AvailabilityStatus
+from features.group_buy.models import GroupBuy
 from features.group_buy.service import GroupBuyService
+from utils.public_id import resolve_id
 from features.group_buy.chat_service import ChatService, connection_manager
 from features.group_buy.schemas import (
     GroupBuyCreate, GroupBuyUpdate, GroupBuyResponse, GroupBuyDetailResponse,
@@ -41,6 +43,7 @@ async def get_available_products_for_group_buy(
         return [
             {
                 "id": product.id,
+                "public_id": product.public_id,
                 "name": product.name,
                 "price": product.price,
                 "category": product.category,
@@ -86,11 +89,12 @@ async def get_user_groups(
 
 @router.get("/groups/{group_id}", response_model=GroupBuyDetailResponse)
 async def get_group_details(
-    group_id: int,
+    group_id: str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get detailed information about a specific group"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         group_details = service.get_group_details(group_id, current_user.id)
@@ -102,12 +106,13 @@ async def get_group_details(
 
 @router.put("/groups/{group_id}", response_model=GroupBuyResponse)
 async def update_group(
-    group_id: int,
+    group_id: str,
     update_data: GroupBuyUpdate,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Update a group (only creator can update)"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         group = service.update_group(group_id, current_user.id, update_data)
@@ -119,11 +124,12 @@ async def update_group(
 
 @router.get("/groups/{group_id}/progress", response_model=GroupProgressResponse)
 async def get_group_progress(
-    group_id: int,
+    group_id: str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get progress information for a group"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         progress = service.get_group_progress(group_id)
@@ -135,14 +141,17 @@ async def get_group_progress(
 
 @router.post("/groups/{group_id}/join", response_model=GroupMemberResponse, status_code=status.HTTP_201_CREATED)
 async def join_group(
-    group_id: int,
+    group_id: str,
     join_data: GroupMemberJoin,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Join an existing group"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
+        # The group in the URL decides which group is joined
+        join_data.group_id = group_id
         member = await service.join_group(current_user.id, join_data)
         return member
     except ValueError as e:
@@ -152,11 +161,12 @@ async def join_group(
 
 @router.post("/groups/{group_id}/leave", status_code=status.HTTP_200_OK)
 async def leave_group(
-    group_id: int,
+    group_id: str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Leave a group"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         success = service.leave_group(group_id, current_user.id)
@@ -168,11 +178,12 @@ async def leave_group(
 
 @router.post("/groups/{group_id}/cancel", status_code=status.HTTP_200_OK)
 async def cancel_group(
-    group_id: int,
+    group_id: str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Cancel a group (only creator can cancel)"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         success = service.cancel_group(group_id, current_user.id)
@@ -184,11 +195,12 @@ async def cancel_group(
 
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
-    group_id: int,
+    group_id: str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Delete a group permanently (only creator can delete, only empty or cancelled groups)"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         success = service.delete_group(group_id, current_user.id)
@@ -200,13 +212,14 @@ async def delete_group(
 
 @router.post("/groups/{group_id}/contribute", response_model=GroupTransactionResponse, status_code=status.HTTP_201_CREATED)
 async def add_contribution(
-    group_id: int,
+    group_id: str,
     amount: float = Query(..., gt=0, description="Contribution amount"),
     payment_method: str = Query("wallet", description="Payment method"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Add a contribution to the group wallet"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         transaction = await service.add_contribution(group_id, current_user.id, amount, payment_method)
@@ -218,11 +231,12 @@ async def add_contribution(
 
 @router.get("/groups/{group_id}/share", response_model=GroupInviteResponse)
 async def get_shareable_link(
-    group_id: int,
+    group_id: str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get the shareable link for a group"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         group_details = service.get_group_details(group_id, current_user.id)
@@ -243,12 +257,13 @@ async def get_shareable_link(
 
 @router.post("/groups/{group_id}/invite", response_model=GroupInviteResponse)
 async def invite_to_group(
-    group_id: int,
+    group_id: str,
     invite_data: GroupInviteRequest,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Invite someone to join a group"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         group_details = service.get_group_details(group_id, current_user.id)
@@ -275,11 +290,12 @@ async def invite_to_group(
 
 @router.get("/groups/{group_id}/notifications", response_model=List[GroupNotificationResponse])
 async def get_group_notifications(
-    group_id: int,
+    group_id: str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get notifications for a group"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         group_details = service.get_group_details(group_id, current_user.id)
@@ -300,12 +316,13 @@ async def get_group_notifications(
 
 @router.post("/groups/{group_id}/stock-alert", response_model=StockAlertResponse)
 async def create_stock_alert(
-    group_id: int,
+    group_id: str,
     alert_data: StockAlertRequest,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Create a stock alert for a group"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         group_details = service.get_group_details(group_id, current_user.id)
@@ -352,11 +369,12 @@ async def join_group_by_link(
 
 @router.get("/groups/{group_id}/analytics")
 async def get_group_analytics(
-    group_id: int,
+    group_id: str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get analytics for a group (creator only)"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         group_details = service.get_group_details(group_id, current_user.id)
@@ -409,10 +427,11 @@ async def get_public_groups(
 
 @router.get("/groups/public/{group_id}")
 async def get_public_group_details(
-    group_id: int,
+    group_id: str,
     db: Session = Depends(get_db)
 ):
     """Get public group details for non-members"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         group_details = service.get_public_group_details(group_id)
@@ -424,11 +443,12 @@ async def get_public_group_details(
 
 @router.get("/groups/{group_id}/validate-join", response_model=GroupJoinValidationResponse)
 async def validate_group_join(
-    group_id: int,
+    group_id: str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Validate if a user can join a group"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         validation = service.validate_group_join(group_id, current_user.id)
@@ -438,11 +458,12 @@ async def validate_group_join(
 
 @router.post("/groups/{group_id}/pricing", response_model=GroupPricingResponse)
 async def calculate_group_pricing(
-    group_id: int,
+    group_id: str,
     quantity: float = Query(..., gt=0, description="Quantity to calculate price for"),
     db: Session = Depends(get_db)
 ):
     """Calculate pricing for a specific quantity in a group"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
         pricing = service.calculate_group_pricing(group_id, quantity)
@@ -454,14 +475,16 @@ async def calculate_group_pricing(
 
 @router.post("/groups/{group_id}/join-public", response_model=GroupJoinResponse, status_code=status.HTTP_201_CREATED)
 async def join_public_group(
-    group_id: int,
+    group_id: str,
     join_request: GroupJoinRequest,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Join a public group (with payment placeholder)"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         service = GroupBuyService(db)
+        join_request.group_id = group_id
         join_response = service.request_group_join(current_user.id, join_request)
         return join_response
     except ValueError as e:
@@ -475,7 +498,7 @@ async def join_public_group(
 
 @router.get("/groups/{group_id}/chat/messages", response_model=MessageHistoryResponse)
 async def get_chat_messages(
-    group_id: int,
+    group_id: str,
     limit: int = Query(50, ge=1, le=100, description="Number of messages to retrieve"),
     before_message_id: Optional[int] = Query(None, description="Get messages before this message ID"),
     after_message_id: Optional[int] = Query(None, description="Get messages after this message ID"),
@@ -484,6 +507,7 @@ async def get_chat_messages(
     db: Session = Depends(get_db)
 ):
     """Get chat messages for a group"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         # Verify user is a member of the group
         group_service = GroupBuyService(db)
@@ -523,12 +547,13 @@ async def get_chat_messages(
 
 @router.post("/groups/{group_id}/chat/messages", response_model=ChatMessageResponse, status_code=status.HTTP_201_CREATED)
 async def send_chat_message(
-    group_id: int,
+    group_id: str,
     message_data: ChatMessageSend,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Send a message to group chat"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         # Validate message content
         if not message_data.message_content or len(message_data.message_content.strip()) == 0:
@@ -568,13 +593,14 @@ async def send_chat_message(
 
 @router.put("/groups/{group_id}/chat/messages/{message_id}/pin")
 async def pin_chat_message(
-    group_id: int,
+    group_id: str,
     message_id: int,
     is_pinned: bool = Query(..., description="Whether to pin or unpin the message"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Pin or unpin a chat message (moderators only)"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         # Verify user is a group creator (moderator)
         group_service = GroupBuyService(db)
@@ -595,12 +621,13 @@ async def pin_chat_message(
 
 @router.delete("/groups/{group_id}/chat/messages/{message_id}")
 async def delete_chat_message(
-    group_id: int,
+    group_id: str,
     message_id: int,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Delete a chat message (author or moderator only)"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         # Verify user is a member of the group
         group_service = GroupBuyService(db)
@@ -620,11 +647,12 @@ async def delete_chat_message(
 
 @router.get("/groups/{group_id}/chat/stats", response_model=ChatStatsResponse)
 async def get_chat_stats(
-    group_id: int,
+    group_id: str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get chat statistics for a group"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         # Verify user is a member of the group
         group_service = GroupBuyService(db)
@@ -645,12 +673,13 @@ async def get_chat_stats(
 
 @router.post("/groups/{group_id}/chat/report")
 async def report_chat_message(
-    group_id: int,
+    group_id: str,
     report_data: ChatReportCreate,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Report a chat message for moderation"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     try:
         # Verify user is a member of the group
         group_service = GroupBuyService(db)
@@ -670,10 +699,11 @@ async def report_chat_message(
 @router.websocket("/groups/{group_id}/chat/ws")
 async def chat_websocket(
     websocket: WebSocket,
-    group_id: int,
+    group_id: str,
     db: Session = Depends(get_db)
 ):
     """WebSocket endpoint for real-time chat"""
+    group_id = resolve_id(db, GroupBuy, group_id, "Group")
     chat_service = ChatService(db)
     user_id = None  # TODO: Get user from WebSocket authentication
     

@@ -16,6 +16,7 @@ from features.auth.models import User
 from features.users.models import FarmerProfile
 from core.dependencies import get_current_active_user
 from utils.helpers import split_images
+from utils.public_id import resolve_id
 
 router = APIRouter(prefix="/marketplace", tags=["Marketplace"])
 
@@ -51,6 +52,7 @@ async def get_all_products(
         
         public_products.append(ProductPublicResponse(
             id=product.id,
+            public_id=product.public_id,
             name=product.name,
             category=product.category,
             description=product.description or "",
@@ -101,7 +103,8 @@ async def get_product_categories():
 
 
 @router.get("/products/{product_id}", response_model=ProductDetailResponse)
-async def get_product_detail(product_id: int, db: Session = Depends(get_db)):
+async def get_product_detail(product_id: str, db: Session = Depends(get_db)):
+    product_id = resolve_id(db, Product, product_id, "Product")
     service = MarketplaceService(db)
     product = service.get_product(product_id)
     if not product:
@@ -125,6 +128,7 @@ async def get_product_detail(product_id: int, db: Session = Depends(get_db)):
     
     return ProductDetailResponse(
         id=product.id,
+        public_id=product.public_id,
         farmer_id=product.farmer_id,
         name=product.name,
         category=product.category,
@@ -176,6 +180,7 @@ async def create_product(
         
         return ProductResponse(
             id=product.id,
+            public_id=product.public_id,
             farmer_id=product.farmer_id,
             name=product.name,
             category=product.category,
@@ -212,12 +217,16 @@ async def get_my_products(
 
     # One grouped query rather than a count per product
     product_ids = [product.id for product in products]
-    order_counts = dict(
-        db.query(Order.product_id, func.count(Order.id))
+    status_rows = (
+        db.query(Order.product_id, Order.status, func.count(Order.id))
         .filter(Order.product_id.in_(product_ids))
-        .group_by(Order.product_id)
+        .group_by(Order.product_id, Order.status)
         .all()
-    ) if product_ids else {}
+    ) if product_ids else []
+    status_counts: Dict[int, Dict[str, int]] = {}
+    for product_id, order_status, count in status_rows:
+        key = order_status.value if hasattr(order_status, "value") else str(order_status)
+        status_counts.setdefault(product_id, {})[key] = count
 
     response_products = []
     for product in products:
@@ -230,6 +239,7 @@ async def get_my_products(
         
         response_products.append(FarmerProductResponse(
             id=product.id,
+            public_id=product.public_id,
             farmer_id=product.farmer_id,
             name=product.name,
             category=product.category,
@@ -246,18 +256,20 @@ async def get_my_products(
             average_rating=product.average_rating or 0.0,
             created_at=product.created_at,
             updated_at=product.updated_at,
-            order_count=order_counts.get(product.id, 0)
+            order_count=sum(status_counts.get(product.id, {}).values()),
+            order_status_counts=status_counts.get(product.id, {})
         ))
 
     return response_products
 
 @router.put("/farmers/products/{product_id}", response_model=ProductResponse)
 async def update_product(
-    product_id: int,
+    product_id: str,
     product_data: ProductUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
+    product_id = resolve_id(db, Product, product_id, "Product")
     if current_user.category != "farmer":
         raise HTTPException(status_code=403, detail="Only farmers can update products")
     
@@ -276,6 +288,7 @@ async def update_product(
     
     return ProductResponse(
         id=product.id,
+        public_id=product.public_id,
         farmer_id=product.farmer_id,
         name=product.name,
         category=product.category,
@@ -296,10 +309,11 @@ async def update_product(
 
 @router.delete("/farmers/products/{product_id}")
 async def delete_product(
-    product_id: int,
+    product_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
+    product_id = resolve_id(db, Product, product_id, "Product")
     if current_user.category != "farmer":
         raise HTTPException(status_code=403, detail="Only farmers can delete products")
     
@@ -312,11 +326,12 @@ async def delete_product(
 # Additional endpoints
 @router.post("/farmers/products/{product_id}/discount")
 async def add_discount(
-    product_id: int,
+    product_id: str,
     discount_percentage: float = Query(..., ge=0, le=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
+    product_id = resolve_id(db, Product, product_id, "Product")
     if current_user.category != "farmer":
         raise HTTPException(status_code=403, detail="Only farmers can add discounts")
     
@@ -328,10 +343,11 @@ async def add_discount(
 
 @router.delete("/farmers/products/{product_id}/discount")
 async def remove_discount(
-    product_id: int,
+    product_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
+    product_id = resolve_id(db, Product, product_id, "Product")
     if current_user.category != "farmer":
         raise HTTPException(status_code=403, detail="Only farmers can remove discounts")
     
@@ -371,7 +387,9 @@ async def get_my_orders(
         
         enhanced_orders.append(OrderDetailResponse(
             id=order.id,
+            public_id=order.public_id,
             product_id=order.product_id,
+            product_public_id=order.product_public_id,
             consumer_id=order.consumer_id,
             quantity_ordered=order.quantity_ordered,
             delivery_address=order.delivery_address,
@@ -404,7 +422,8 @@ async def create_review(
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/products/{product_id}/reviews", response_model=List[ReviewResponse])
-async def get_product_reviews(product_id: int, db: Session = Depends(get_db)):
+async def get_product_reviews(product_id: str, db: Session = Depends(get_db)):
+    product_id = resolve_id(db, Product, product_id, "Product")
     service = MarketplaceService(db)
     reviews = service.get_product_reviews(product_id)
     
@@ -436,6 +455,7 @@ async def search_suggestions(
     for product in products:
         suggestions.append({
             "id": product.id,
+            "public_id": product.public_id,
             "name": product.name,
             "category": product.category,
             "price": product.price

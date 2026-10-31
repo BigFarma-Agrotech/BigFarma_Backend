@@ -7,9 +7,11 @@ from features.orders.models import IssueStatus, OrderTimelineStatus
 # Enhanced Order schemas
 class OrderDetailResponse(BaseModel):
     id: int
+    public_id: str
     order_number: str
     consumer_id: int
     product_id: int
+    product_public_id: Optional[str] = None
     quantity_ordered: str
     total_price: float
     delivery_address: str

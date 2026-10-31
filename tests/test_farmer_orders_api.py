@@ -8,7 +8,8 @@ def _place_order(client, current, consumer_id, product_id, address="12 Farm Rd, 
     res = client.post("/api/v1/orders/", json={"product_id": product_id, "quantity_ordered": "2",
                                                "delivery_address": address})
     assert res.status_code == 201, res.text
-    return res.json()["id"]
+    # URLs take the random public id, never the integer one
+    return res.json()["public_id"]
 
 
 DESCRIPTION = "Freshly harvested this week"
@@ -51,15 +52,25 @@ def test_orders_filter_by_product_and_products_carry_order_counts(env):
     _place_order(client, current, consumer_id, other_product_id)
 
     current["user_id"] = farmer_id
-    res = client.get("/api/v1/orders/farmer/orders", params={"product_id": product_id})
+    product_public_id = _app_session().get(Product, product_id).public_id
+    res = client.get("/api/v1/orders/farmer/orders", params={"product_id": product_public_id})
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["total"] == 2
-    assert {o["id"] for o in body["items"]} == {first, second}
+    assert {o["public_id"] for o in body["items"]} == {first, second}
 
     products = client.get("/api/v1/marketplace/farmers/products").json()
     counts = {p["id"]: p["order_count"] for p in products}
     assert counts == {product_id: 2, other_product_id: 1}
+    status_counts = {p["id"]: p["order_status_counts"] for p in products}
+    assert status_counts == {product_id: {"pending": 2}, other_product_id: {"pending": 1}}
+
+    res = client.put(f"/api/v1/orders/{first}/status", json={"status": "cancelled"})
+    assert res.status_code == 200, res.text
+    products = client.get("/api/v1/marketplace/farmers/products").json()
+    product = next(p for p in products if p["id"] == product_id)
+    assert product["order_count"] == 2
+    assert product["order_status_counts"] == {"pending": 1, "cancelled": 1}
 
 
 def test_farmer_order_detail_includes_buyer_contact(env):
@@ -70,7 +81,7 @@ def test_farmer_order_detail_includes_buyer_contact(env):
     res = client.get(f"/api/v1/orders/farmer/orders/{order_id}")
     assert res.status_code == 200, res.text
     order = res.json()
-    assert order["id"] == order_id
+    assert order["public_id"] == order_id
     assert order["delivery_address"] == "Lekki Phase 1, Lagos"
     assert "customer_name" in order and "customer_phone" in order
 
@@ -103,3 +114,25 @@ def test_farmer_status_changes_follow_the_delivery_flow(env):
 
     order = client.get(f"/api/v1/orders/farmer/orders/{order_id}").json()
     assert order["status"] == "awaiting_confirmation"
+
+
+def test_urls_use_random_public_ids_not_integer_ids(env):
+    import re
+    client, current, farmer_id, consumer_id, product_id, _ = env
+    _make_listable(product_id)
+    order_public_id = _place_order(client, current, consumer_id, product_id)
+    assert re.fullmatch(r"[A-Za-z0-9]{8}", order_public_id)
+
+    current["user_id"] = farmer_id
+    order = client.get(f"/api/v1/orders/farmer/orders/{order_public_id}").json()
+    assert re.fullmatch(r"[A-Za-z0-9]{8}", order["product_public_id"])
+
+    # The integer ids no longer work in URLs
+    assert client.get(f"/api/v1/orders/farmer/orders/{order['id']}").status_code == 404
+    assert client.get(f"/api/v1/marketplace/products/{product_id}").status_code == 404
+
+    reviews = client.get(f"/api/v1/marketplace/products/{order['product_public_id']}/reviews")
+    assert reviews.status_code == 200, reviews.text
+
+    products = client.get("/api/v1/marketplace/farmers/products").json()
+    assert [p["public_id"] for p in products] == [order["product_public_id"]]
