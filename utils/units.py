@@ -52,7 +52,21 @@ def is_count_unit(unit: Optional[str]) -> bool:
     return normalize_unit(unit) in COUNT_UNITS
 
 
+# Units that keep their form in the plural ("10 kg", "5 head")
+_NO_PLURAL = {"kg", "g", "lb", "ml", "head", "dozen", "tonne"}
+_PLURALS = {"box": "boxes", "bunch": "bunches", "paint bucket": "paint buckets"}
+
+
+def unit_label(amount: float, unit: Optional[str]) -> str:
+    """unit_label(1, "bag") -> "bag"; unit_label(3, "bag") -> "bags" """
+    name = normalize_unit(unit) or ""
+    if not name or float(amount) == 1 or name in _NO_PLURAL:
+        return name
+    return _PLURALS.get(name, f"{name}s")
+
+
 def format_quantity(amount: float, unit: Optional[str]) -> str:
-    """ (5.0, "kg") -> "5 kg" """
+    """ (5.0, "kg") -> "5 kg"; (3, "bag") -> "3 bags" """
     number = f"{amount:g}"
-    return f"{number} {unit}" if unit else number
+    label = unit_label(amount, unit)
+    return f"{number} {label}" if label else number

@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 KEEP_ALIVE_INTERVAL_SECONDS = 13 * 60
 NOTIFICATION_SWEEP_INTERVAL_SECONDS = 24 * 60 * 60
+GROUP_DEADLINE_CHECK_SECONDS = 15 * 60
 
 
 async def keep_alive(url: str):
@@ -55,6 +56,24 @@ async def sweep_expired_notifications():
         await asyncio.sleep(NOTIFICATION_SWEEP_INTERVAL_SECONDS)
 
 
+async def expire_overdue_groups():
+    """Every 15 minutes: close group buys past their deadline and refund members."""
+    from database import SessionLocal
+    from features.group_buy.payments import GroupPaymentService
+
+    while True:
+        db = SessionLocal()
+        try:
+            expired = await GroupPaymentService(db).expire_overdue_groups()
+            if expired:
+                logger.info("Expired %s group buy(s) past their deadline", expired)
+        except Exception as exc:
+            logger.warning("Group deadline check failed: %s", exc)
+        finally:
+            db.close()
+        await asyncio.sleep(GROUP_DEADLINE_CHECK_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Render sets RENDER_EXTERNAL_URL automatically; it must be the public URL
@@ -64,8 +83,10 @@ async def lifespan(app: FastAPI):
     if base_url:
         task = asyncio.create_task(keep_alive(f"{base_url.rstrip('/')}/health"))
     sweep_task = asyncio.create_task(sweep_expired_notifications())
+    deadline_task = asyncio.create_task(expire_overdue_groups())
     yield
     sweep_task.cancel()
+    deadline_task.cancel()
     if task:
         task.cancel()
 

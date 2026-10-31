@@ -69,6 +69,11 @@ async def verify_transaction(reference: str) -> Dict[str, Any]:
     return await _request("GET", f"/transaction/verify/{reference}")
 
 
+async def refund_transaction(reference: str) -> Dict[str, Any]:
+    """Refund a successful transaction in full (Paystack sends it back to the payer's card/bank)."""
+    return await _request("POST", "/refund", {"transaction": reference})
+
+
 def valid_webhook_signature(raw_body: bytes, signature: Optional[str]) -> bool:
     """Paystack signs webhooks with HMAC-SHA512 of the raw body using the secret key."""
     if not signature or not is_configured():

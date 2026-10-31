@@ -102,10 +102,16 @@ class Payment(Base):
     amount_kobo = Column(Integer, nullable=False)   # what Paystack is asked to charge
     status = Column(String, nullable=False, default=PaymentStatus.PENDING.value)
     gateway_response = Column(String, nullable=True)
+    # "order" (checkout) or "group_buy" (a member paying for their share of a group)
+    purpose = Column(String, nullable=False, default="order", server_default="order")
+    group_member_id = Column(Integer, ForeignKey("group_members.id"), nullable=True, index=True)
+    # Quantity this payment buys in the group (a member's first share or a top-up)
+    group_quantity = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     paid_at = Column(DateTime(timezone=True), nullable=True)
 
     orders = relationship("Order", back_populates="payment")
+    group_member = relationship("GroupMember")
 
 
 class Order(Base):
@@ -130,6 +136,8 @@ class Order(Base):
     payment_status = Column(String, nullable=False, default=OrderPaymentStatus.UNPAID,
                             server_default=OrderPaymentStatus.UNPAID, index=True)
     payment_id = Column(Integer, ForeignKey("payments.id"), nullable=True, index=True)
+    # Set on the bulk order placed when a group buy reaches its target
+    group_id = Column(Integer, ForeignKey("group_buys.id"), nullable=True, index=True)
     estimated_delivery_date = Column(DateTime(timezone=True), nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())

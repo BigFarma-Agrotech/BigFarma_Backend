@@ -10,11 +10,13 @@ from services import image_storage
 
 
 def _photo_data_url(width=4000, height=3000):
-    # A noisy photo-like image: large, and compresses like a real photo would
-    image = Image.effect_noise((width, height), 64).convert("RGB")
+    # A photo-like image (smooth shading plus grain), saved the way phones do: a big JPEG
+    shading = Image.radial_gradient("L").resize((width, height))
+    grain = Image.effect_noise((width, height), 24)
+    image = Image.merge("RGB", (shading, Image.blend(shading, grain, 0.3), grain))
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode(), len(buffer.getvalue())
+    image.save(buffer, format="JPEG", quality=95)
+    return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode(), len(buffer.getvalue())
 
 
 class FakeS3:

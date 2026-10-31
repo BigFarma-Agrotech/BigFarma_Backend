@@ -41,7 +41,7 @@ def env(monkeypatch):
     paystack_state.update(transactions={}, status="success", amount_offset=0)
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)  # same as production
     db = Session()
 
     farmer = User(email="farmer@example.com", password="x", category=UserCategory.FARMER, is_verified=True, is_active=True)
@@ -194,7 +194,11 @@ def test_delete_clear_and_expiry(env):
     old.created_at = datetime.now(timezone.utc) - timedelta(days=31)
     db.commit()
     assert [n["id"] for n in client.get("/api/v1/notifications").json()] == [notes[2]["id"]]
-    assert db.get(Notification, notes[1]["id"]) is None  # actually deleted
+    # Hidden straight away; the daily sweep deletes it
+    from features.notifications.service import NotificationService
+    assert NotificationService(db).delete_expired() == 1
+    db.expire_all()
+    assert db.get(Notification, notes[1]["id"]) is None
 
     # Clear all
     res = client.delete("/api/v1/notifications")

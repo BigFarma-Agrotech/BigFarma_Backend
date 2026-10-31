@@ -35,6 +35,8 @@ class GroupBuy(Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
     target_quantity = Column(String, nullable=False)  # e.g., "100kg", "50 pieces"
     target_quantity_numeric = Column(Float, nullable=False)  # Numeric value for calculations
+    # The least each member must buy when joining (top-ups can be any amount)
+    min_member_quantity = Column(Float, nullable=False, default=1.0, server_default="1")
     quantity_unit = Column(String, nullable=False)  # e.g., "kg", "pieces", "goats"
     
     # Group management
@@ -84,6 +86,9 @@ class GroupMember(Base):
     # Contribution
     contribution_amount = Column(Float, default=0.0)  # Amount this member has contributed
     quantity_committed = Column(Float, default=0.0)  # Quantity this member committed to
+    # Contact for the group's delivery, given when paying
+    contact_name = Column(String, nullable=True)
+    contact_phone = Column(String, nullable=True)
     
     # Invitation details
     invited_by = Column(Integer, ForeignKey("users.id"), nullable=True)

@@ -9,7 +9,7 @@ import json
 
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import and_, or_, desc
+from sqlalchemy import and_, or_, desc, func
 
 from features.auth.models import User
 from .models import Wallet, Transaction, WithdrawalRequest, BankAccount, TransactionType, TransactionCategory, WithdrawalStatus, BankAccountStatus
@@ -329,9 +329,11 @@ class WalletService:
             .all()
         
         # Calculate stats
-        all_transactions = self.db.query(Transaction)\
-            .filter(Transaction.wallet_id == wallet.id)\
-            .all()
+        # One summed row per (type, category) instead of loading every transaction
+        all_transactions = self.db.query(
+            Transaction.type, Transaction.category,
+            func.coalesce(func.sum(Transaction.amount), 0).label("amount"),
+        ).filter(Transaction.wallet_id == wallet.id).group_by(Transaction.type, Transaction.category).all()
         
         stats = calculate_wallet_stats(all_transactions)
         

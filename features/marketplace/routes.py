@@ -378,10 +378,19 @@ async def get_my_orders(
     service = MarketplaceService(db)
     orders = service.get_user_orders(current_user.id)
     
+    # Products and farm profiles for the whole list in two queries
+    product_ids = {order.product_id for order in orders}
+    products = {p.id: p for p in db.query(Product).filter(Product.id.in_(product_ids))} if product_ids else {}
+    farmer_ids = {p.farmer_id for p in products.values()}
+    profiles = {
+        profile.user_id: profile
+        for profile in db.query(FarmerProfile).filter(FarmerProfile.user_id.in_(farmer_ids))
+    } if farmer_ids else {}
+
     enhanced_orders = []
     for order in orders:
-        product = service.get_product(order.product_id)
-        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first() if product else None
+        product = products.get(order.product_id)
+        farmer_profile = profiles.get(product.farmer_id) if product else None
         
         enhanced_orders.append(OrderDetailResponse(
             id=order.id,

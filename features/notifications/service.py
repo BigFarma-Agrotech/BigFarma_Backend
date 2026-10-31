@@ -46,10 +46,20 @@ class NotificationService:
         return notification
 
     def with_references(self, notifications: List[Notification]) -> List[Notification]:
-        """Fill in the public ids of the orders the notifications point at (one query)."""
+        """Fill in the public ids of what the notifications point at: the order, or
+        for group buy notifications the group (one query each)."""
+        group_ids = {n.reference_id for n in notifications
+                     if n.reference_id is not None and n.notification_type == NotificationType.GROUP_BUY.value}
+        if group_ids:
+            from features.group_buy.models import GroupBuy
+            groups = dict(self.db.query(GroupBuy.id, GroupBuy.public_id).filter(GroupBuy.id.in_(group_ids)).all())
+            for n in notifications:
+                if n.notification_type == NotificationType.GROUP_BUY.value and n.reference_id in groups:
+                    n.reference_public_id = groups[n.reference_id]
         order_ids = {
             n.reference_id for n in notifications
-            if n.reference_id is not None and n.notification_type != NotificationType.LOGIN_ALERT.value
+            if n.reference_id is not None
+            and n.notification_type not in (NotificationType.LOGIN_ALERT.value, NotificationType.GROUP_BUY.value)
         }
         if not order_ids:
             return notifications
@@ -62,7 +72,8 @@ class NotificationService:
         public_ids = {order_id: (order_public_id, product_public_id)
                       for order_id, order_public_id, product_public_id in rows}
         for n in notifications:
-            if n.notification_type != NotificationType.LOGIN_ALERT.value and n.reference_id in public_ids:
+            if (n.notification_type not in (NotificationType.LOGIN_ALERT.value, NotificationType.GROUP_BUY.value)
+                    and n.reference_id in public_ids):
                 n.reference_public_id, n.product_public_id = public_ids[n.reference_id]
         return notifications
 
@@ -93,9 +104,11 @@ class NotificationService:
 
     def get_user_notifications(self, user_id: int, unread_only: bool = False,
                                skip: int = 0, limit: int = 50) -> List[Notification]:
-        # Expired ones never show, even between the periodic sweeps
-        self.delete_expired(user_id)
-        query = self.db.query(Notification).filter(Notification.user_id == user_id)
+        # Expired ones never show, even between the daily sweeps that delete them
+        cutoff = datetime.now(timezone.utc) - timedelta(days=settings.NOTIFICATION_RETENTION_DAYS)
+        query = self.db.query(Notification).filter(
+            Notification.user_id == user_id, Notification.created_at >= cutoff
+        )
         if unread_only:
             query = query.filter(Notification.is_read.is_(False))
         notifications = query.order_by(Notification.created_at.desc(), Notification.id.desc()).offset(skip).limit(limit).all()

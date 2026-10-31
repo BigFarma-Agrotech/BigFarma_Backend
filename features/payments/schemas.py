@@ -51,6 +51,9 @@ class PaymentResponse(BaseModel):
     paid_at: Optional[datetime] = None
     gateway_response: Optional[str] = None
     orders: List[PaymentOrder] = []
+    # "order" for checkout, "group_buy" for joining a group (then group_public_id is set)
+    purpose: str = "order"
+    group_public_id: Optional[str] = None
 
 
 class CheckoutResponse(PaymentResponse):

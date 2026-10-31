@@ -10,6 +10,7 @@ class NotificationType(str, enum.Enum):
     DELIVERY_CONFIRMED = "delivery_confirmed"  # farmer: buyer confirmed, wallet credited
     DELIVERY_ISSUE = "delivery_issue"      # farmer: buyer reported a problem
     LOGIN_ALERT = "login_alert"
+    GROUP_BUY = "group_buy"                # group members: joined, new member, target reached
 
 class Notification(Base):
     __tablename__ = "notifications"

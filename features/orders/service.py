@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 import uuid
 
 # Import models from marketplace (existing) and orders (new)
-from utils.units import format_quantity, is_count_unit
+from utils.units import format_quantity, is_count_unit, unit_label
 from features.marketplace.models import Order, Product, OrderStatus, AvailabilityStatus, OrderPaymentStatus
 from features.orders.models import OrderTimeline, OrderIssue, OrderTimelineStatus, IssueStatus
 from features.orders.schemas import (
@@ -39,7 +39,7 @@ def order_quantity_problem(product: Product, units: float) -> Optional[str]:
     unit = product.unit or ""
     minimum = product.min_order_quantity or 1
     if is_count_unit(product.unit) and not float(units).is_integer():
-        return f"{product.name} is sold in whole {unit or 'units'}"
+        return f"{product.name} is sold in whole {unit_label(2, unit) or 'units'}"
     if units + 1e-9 < minimum:
         return f"The minimum order for {product.name} is {format_quantity(minimum, product.unit)}"
     stock = product.available_quantity
@@ -147,7 +147,7 @@ class OrderService:
                     FarmerProfile.farm_name.ilike(search_term)
                 )
         
-        return query.order_by(Order.created_at.desc()).all()
+        return query.options(joinedload(Order.product)).order_by(Order.created_at.desc()).all()
 
     def get_farmer_orders(self, farmer_id: int, status: Optional[OrderStatus] = None,
                           date_from: Optional[date] = None, date_to: Optional[date] = None,

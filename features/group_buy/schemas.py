@@ -32,37 +32,38 @@ class GroupBuyCreate(BaseModel):
     group_name: str = Field(..., min_length=3, max_length=100, description="Name of the group")
     group_description: Optional[str] = Field(None, max_length=500, description="Description of the group")
     group_location: str = Field(..., min_length=3, max_length=200, description="Location where the group will meet")
-    
+
     # More flexible product specification
     product_id: Optional[int] = Field(None, description="ID of the product to purchase")
     product_name: Optional[str] = Field(None, description="Name of the product (if product_id not provided)")
-    
+
     # More flexible quantity specification
     target_quantity: str = Field(..., description="Target quantity to purchase (e.g., '100kg', '50 pieces')")
     target_quantity_numeric: Optional[float] = Field(None, gt=0, description="Numeric value of target quantity (auto-calculated if not provided)")
     quantity_unit: Optional[str] = Field(None, description="Unit of measurement (auto-extracted if not provided)")
-    
+
     # Make individual_contribution optional with reasonable default calculation
     individual_contribution: Optional[float] = Field(None, gt=0, description="Amount each member needs to contribute (auto-calculated if not provided)")
-    
+
     is_public: bool = Field(True, description="Whether group is publicly discoverable")
     max_members: Optional[int] = Field(None, gt=0, description="Optional member limit")
     deadline: Optional[datetime] = Field(None, description="Optional group deadline")
-    
+    min_member_quantity: Optional[float] = Field(None, gt=0, description="The least each member must buy when joining")
+
     @model_validator(mode='after')
     def validate_all_fields(self):
         """Validate and auto-calculate all fields after initial processing"""
         # Check product specification
         if not self.product_id and not self.product_name:
             raise ValueError("Either product_id or product_name must be provided")
-        
+
         # Auto-calculate target_quantity_numeric if not provided
         if self.target_quantity_numeric is None:
             try:
                 self.target_quantity_numeric = GroupBuyCreateValidator.validate_target_quantity(self.target_quantity, "")
             except:
                 raise ValueError("Could not extract numeric value from target_quantity. Please provide target_quantity_numeric explicitly.")
-        
+
         # Auto-extract quantity_unit if not provided
         if self.quantity_unit is None:
             # Try to extract unit from target_quantity string
@@ -77,7 +78,7 @@ class GroupBuyCreate(BaseModel):
             else:
                 # Default to 'pieces' if no unit found
                 self.quantity_unit = 'pieces'
-        
+
         return self
 
 class GroupBuyUpdate(BaseModel):
@@ -103,7 +104,12 @@ class GroupBuyResponse(GroupBuyBase):
     updated_at: Optional[datetime]
     completed_at: Optional[datetime]
     locked_at: Optional[datetime]
-    
+    # Shown on the group page: when it closes, and how many may join
+    deadline: Optional[datetime] = None
+    max_members: Optional[int] = None
+    is_public: bool = True
+    min_member_quantity: float = 1.0
+
     class Config:
         from_attributes = True
 
@@ -112,6 +118,14 @@ class GroupBuyDetailResponse(GroupBuyResponse):
     creator: dict  # Creator details
     members: List[dict]  # Member details
     transactions: List[dict]  # Transaction history
+    # For the join form: price per unit and how much the group still needs
+    unit_price: Optional[float] = None
+    remaining_quantity: Optional[float] = None
+    # The least a new member can buy right now (the minimum share, or what's left)
+    join_minimum: Optional[float] = None
+    members_count: int = 0
+    is_member: bool = False
+    is_creator: bool = False
 
 # Member schemas
 class GroupMemberBase(BaseModel):
@@ -136,7 +150,7 @@ class GroupMemberResponse(GroupMemberBase):
     invited_by: Optional[int]
     created_at: datetime
     updated_at: Optional[datetime]
-    
+
     class Config:
         from_attributes = True
 
@@ -158,7 +172,7 @@ class GroupTransactionResponse(GroupTransactionBase):
     status: str
     created_at: datetime
     completed_at: Optional[datetime]
-    
+
     class Config:
         from_attributes = True
 
@@ -178,7 +192,7 @@ class GroupNotificationResponse(GroupNotificationBase):
     user_id: int
     is_read: bool
     sent_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -192,7 +206,7 @@ class GroupInviteRequest(BaseModel):
 class GroupInviteResponse(BaseModel):
     invitation_link: str
     invitation_token: str
-    expires_at: datetime
+    expires_at: Optional[datetime] = None  # share links don't expire yet
 
 # Progress and analytics schemas
 class GroupProgressResponse(BaseModel):
@@ -265,7 +279,7 @@ class GroupPublicResponse(BaseModel):
     deadline: Optional[datetime]
     created_at: datetime
     is_public: bool
-    
+
     class Config:
         from_attributes = True
 
@@ -285,7 +299,7 @@ class GroupJoinResponse(BaseModel):
     payment_method: Optional[str]
     status: str
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -322,7 +336,7 @@ class GroupBuyCreateValidator:
         if quantity_unit.lower() not in valid_units:
             raise ValueError(f"Invalid quantity unit. Must be one of: {', '.join(valid_units)}")
         return quantity_unit.lower()
-    
+
     @staticmethod
     def validate_target_quantity(target_quantity: str, quantity_unit: str) -> float:
         """Extract numeric value from target quantity string"""
@@ -362,7 +376,7 @@ class GroupChatResponse(GroupChatBase):
     created_at: datetime
     closed_at: Optional[datetime]
     last_message_at: Optional[datetime]
-    
+
     class Config:
         from_attributes = True
 
@@ -399,14 +413,14 @@ class ChatMessageResponse(ChatMessageBase):
     edited_at: Optional[datetime]
     pinned_at: Optional[datetime]
     pinned_by_user_id: Optional[int]
-    
+
     # User details
     user_name: Optional[str] = None
     user_email: Optional[str] = None
-    
+
     # Reply details
     reply_to: Optional[dict] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -437,11 +451,11 @@ class ChatMembershipResponse(ChatMembershipBase):
     left_at: Optional[datetime]
     notify_on_mention: bool
     notify_on_all_messages: bool
-    
+
     # User details
     user_name: Optional[str] = None
     user_email: Optional[str] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -507,7 +521,7 @@ class ChatReportResponse(BaseModel):
     status: str
     reported_at: datetime
     reviewed_at: Optional[datetime]
-    
+
     class Config:
         from_attributes = True
 

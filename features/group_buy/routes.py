@@ -5,10 +5,13 @@ import logging
 
 from database import get_db
 from core.dependencies import get_current_active_user
-from features.auth.models import User
+from features.auth.models import User, UserCategory
 from features.marketplace.models import Product, AvailabilityStatus
 from features.group_buy.models import GroupBuy
 from features.group_buy.service import GroupBuyService
+from features.group_buy.payments import GroupCheckoutRequest, GroupPaymentService
+from features.payments.schemas import CheckoutResponse
+from features.payments.service import CheckoutError, payment_response
 from utils.public_id import resolve_id
 from features.group_buy.chat_service import ChatService, connection_manager
 from features.group_buy.schemas import (
@@ -54,6 +57,8 @@ async def get_available_products_for_group_buy(
             }
             for product in products
         ]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch products")
 
@@ -86,8 +91,55 @@ async def get_user_groups(
         service = GroupBuyService(db)
         groups = service.get_user_groups(current_user.id, status)
         return groups
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch groups")
+
+# Registered before "/groups/{group_id}", which would otherwise capture "public"
+@router.get("/groups/public", response_model=List[GroupPublicResponse])
+async def get_public_groups(
+    location: Optional[str] = Query(None, description="Filter by location"),
+    product_name: Optional[str] = Query(None, description="Search by product name"),
+    category: Optional[str] = Query(None, description="Filter by product category"),
+    min_price: Optional[float] = Query(None, gt=0, description="Minimum price filter"),
+    max_price: Optional[float] = Query(None, gt=0, description="Maximum price filter"),
+    sort_by: Optional[str] = Query("newest", description="Sort by: newest, oldest, price_asc, price_desc, progress"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(20, ge=1, le=100, description="Number of records to return"),
+    db: Session = Depends(get_db)
+):
+    """Get public groups for discovery and browsing"""
+    try:
+        service = GroupBuyService(db)
+        discovery_request = GroupDiscoveryRequest(
+            location=location,
+            product_name=product_name,
+            category=category,
+            min_price=min_price,
+            max_price=max_price,
+            sort_by=sort_by
+        )
+        groups = service.get_public_groups(discovery_request, skip, limit)
+        return groups
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch public groups")
+
+@router.get("/groups/public/{key}")
+async def get_public_group_details(
+    key: str,
+    db: Session = Depends(get_db)
+):
+    """Public details of a group, for non-members, by its public id or its share link."""
+    group = db.query(GroupBuy).filter((GroupBuy.public_id == key) | (GroupBuy.shareable_link == key)).first()
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    try:
+        return GroupBuyService(db).get_public_group_details(group.id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 @router.get("/groups/{group_id}", response_model=GroupBuyDetailResponse)
 async def get_group_details(
@@ -103,6 +155,8 @@ async def get_group_details(
         return group_details
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch group details")
 
@@ -121,6 +175,8 @@ async def update_group(
         return group
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update group")
 
@@ -138,28 +194,44 @@ async def get_group_progress(
         return progress
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch group progress")
 
-@router.post("/groups/{group_id}/join", response_model=GroupMemberResponse, status_code=status.HTTP_201_CREATED)
-async def join_group(
+# Joining and contributing without paying are no longer possible: members join
+# by paying through Paystack (POST /groups/{group_id}/checkout)
+@router.post("/groups/{group_id}/join", status_code=status.HTTP_410_GONE, include_in_schema=False)
+@router.post("/groups/{group_id}/join-public", status_code=status.HTTP_410_GONE, include_in_schema=False)
+@router.post("/groups/{group_id}/contribute", status_code=status.HTTP_410_GONE, include_in_schema=False)
+async def join_without_paying(group_id: str):
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Join a group by paying for your share: POST /api/v1/groups/{group_id}/checkout",
+    )
+
+
+@router.post("/groups/{group_id}/checkout", response_model=CheckoutResponse, status_code=status.HTTP_201_CREATED)
+async def group_checkout(
     group_id: str,
-    join_data: GroupMemberJoin,
+    data: GroupCheckoutRequest,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Join an existing group"""
-    group_id = resolve_id(db, GroupBuy, group_id, "Group")
+    """Pay for a share of the group with Paystack. Send the buyer to
+    `authorization_url`; on return, /payments/verify/{reference} confirms it and
+    makes them a member (the response has purpose "group_buy" and group_public_id)."""
+    group = db.query(GroupBuy).filter(GroupBuy.public_id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    if current_user.category != UserCategory.CONSUMER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only buyers can join groups")
     try:
-        service = GroupBuyService(db)
-        # The group in the URL decides which group is joined
-        join_data.group_id = group_id
-        member = await service.join_group(current_user.id, join_data)
-        return member
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to join group")
+        payment, authorization_url = await GroupPaymentService(db).start_checkout(current_user, group, data)
+    except CheckoutError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+    return CheckoutResponse(**payment_response(payment).model_dump(), authorization_url=authorization_url)
+
 
 @router.post("/groups/{group_id}/leave", status_code=status.HTTP_200_OK)
 async def leave_group(
@@ -175,6 +247,8 @@ async def leave_group(
         return {"message": "Successfully left the group", "success": success}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to leave group")
 
@@ -192,6 +266,8 @@ async def cancel_group(
         return {"message": "Group cancelled successfully", "success": success}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to cancel group")
 
@@ -209,27 +285,10 @@ async def delete_group(
         return {"message": "Group deleted successfully", "success": success}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete group")
-
-@router.post("/groups/{group_id}/contribute", response_model=GroupTransactionResponse, status_code=status.HTTP_201_CREATED)
-async def add_contribution(
-    group_id: str,
-    amount: float = Query(..., gt=0, description="Contribution amount"),
-    payment_method: str = Query("wallet", description="Payment method"),
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """Add a contribution to the group wallet"""
-    group_id = resolve_id(db, GroupBuy, group_id, "Group")
-    try:
-        service = GroupBuyService(db)
-        transaction = await service.add_contribution(group_id, current_user.id, amount, payment_method)
-        return transaction
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to add contribution")
 
 @router.get("/groups/{group_id}/share", response_model=GroupInviteResponse)
 async def get_shareable_link(
@@ -254,6 +313,8 @@ async def get_shareable_link(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get shareable link")
 
@@ -287,6 +348,8 @@ async def invite_to_group(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send invitation")
 
@@ -313,6 +376,8 @@ async def get_group_notifications(
         return notifications
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch notifications")
 
@@ -348,26 +413,10 @@ async def create_stock_alert(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create stock alert")
-
-@router.get("/groups/public/{shareable_link}")
-async def join_group_by_link(
-    shareable_link: str,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """Join a group using a shareable link"""
-    try:
-        # TODO: Implement link-based joining
-        # This would involve:
-        # 1. Finding group by shareable link
-        # 2. Showing group details
-        # 3. Allowing user to join
-        
-        return {"message": "Group found", "shareable_link": shareable_link}
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process shareable link")
 
 @router.get("/groups/{group_id}/analytics")
 async def get_group_analytics(
@@ -395,54 +444,12 @@ async def get_group_analytics(
         return {"message": "Analytics not implemented yet"}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch analytics")
 
 # Group Discovery and Public Access Routes
-@router.get("/groups/public", response_model=List[GroupPublicResponse])
-async def get_public_groups(
-    location: Optional[str] = Query(None, description="Filter by location"),
-    product_name: Optional[str] = Query(None, description="Search by product name"),
-    category: Optional[str] = Query(None, description="Filter by product category"),
-    min_price: Optional[float] = Query(None, gt=0, description="Minimum price filter"),
-    max_price: Optional[float] = Query(None, gt=0, description="Maximum price filter"),
-    sort_by: Optional[str] = Query("newest", description="Sort by: newest, oldest, price_asc, price_desc, progress"),
-    skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(20, ge=1, le=100, description="Number of records to return"),
-    db: Session = Depends(get_db)
-):
-    """Get public groups for discovery and browsing"""
-    try:
-        service = GroupBuyService(db)
-        discovery_request = GroupDiscoveryRequest(
-            location=location,
-            product_name=product_name,
-            category=category,
-            min_price=min_price,
-            max_price=max_price,
-            sort_by=sort_by
-        )
-        groups = service.get_public_groups(discovery_request, skip, limit)
-        return groups
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch public groups")
-
-@router.get("/groups/public/{group_id}")
-async def get_public_group_details(
-    group_id: str,
-    db: Session = Depends(get_db)
-):
-    """Get public group details for non-members"""
-    group_id = resolve_id(db, GroupBuy, group_id, "Group")
-    try:
-        service = GroupBuyService(db)
-        group_details = service.get_public_group_details(group_id)
-        return group_details
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch group details")
-
 @router.get("/groups/{group_id}/validate-join", response_model=GroupJoinValidationResponse)
 async def validate_group_join(
     group_id: str,
@@ -455,6 +462,8 @@ async def validate_group_join(
         service = GroupBuyService(db)
         validation = service.validate_group_join(group_id, current_user.id)
         return validation
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to validate group join")
 
@@ -472,31 +481,10 @@ async def calculate_group_pricing(
         return pricing
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to calculate pricing")
-
-@router.post("/groups/{group_id}/join-public", response_model=GroupJoinResponse, status_code=status.HTTP_201_CREATED)
-async def join_public_group(
-    group_id: str,
-    join_request: GroupJoinRequest,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """Join a public group (with payment placeholder)"""
-    group_id = resolve_id(db, GroupBuy, group_id, "Group")
-    try:
-        service = GroupBuyService(db)
-        join_request.group_id = group_id
-        join_response = service.request_group_join(current_user.id, join_request)
-        return join_response
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to join group")
-
-# ========================
-# CHAT ROUTES
-# ========================
 
 @router.get("/groups/{group_id}/chat/messages", response_model=MessageHistoryResponse)
 async def get_chat_messages(
@@ -521,7 +509,7 @@ async def get_chat_messages(
         
         # Get or create chat for the group
         chat = None
-        if hasattr(group_details["group"], "chat") and group_details["group"]["chat"]:
+        if group_details["group"]["chat"]:
             chat_id = group_details["group"]["chat"]["id"]
         else:
             # Create chat if it doesn't exist
@@ -574,7 +562,7 @@ async def send_chat_message(
         
         # Get or create chat
         chat = None
-        if hasattr(group_details["group"], "chat") and group_details["group"]["chat"]:
+        if group_details["group"]["chat"]:
             chat_id = group_details["group"]["chat"]["id"]
         else:
             # Create chat if it doesn't exist
@@ -611,6 +599,8 @@ async def pin_chat_message(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only group creators can pin messages")
         
         chat_service = ChatService(db)
+        if not group_details["group"]["chat"]:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This group has no chat yet")
         chat_id = group_details["group"]["chat"]["id"]
         
         message = await chat_service.pin_message(chat_id, message_id, current_user.id, is_pinned)
@@ -618,6 +608,8 @@ async def pin_chat_message(
         
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to pin/unpin message")
 
@@ -644,6 +636,8 @@ async def delete_chat_message(
         
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete message")
 
@@ -663,6 +657,8 @@ async def get_chat_stats(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         
         chat_service = ChatService(db)
+        if not group_details["group"]["chat"]:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This group has no chat yet")
         chat_id = group_details["group"]["chat"]["id"]
         
         stats = chat_service.get_chat_stats(chat_id)
@@ -670,6 +666,8 @@ async def get_chat_stats(
         
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch chat stats")
 
@@ -695,6 +693,8 @@ async def report_chat_message(
         
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to report message")
 

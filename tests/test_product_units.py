@@ -47,16 +47,16 @@ def test_checkout_enforces_minimum_stock_and_whole_units(env):
     _set_product(product_id, quantity="20 bags", unit="bag", min_order_quantity=3)
 
     res = checkout(client, current, consumer_id, product_id, quantity=2)
-    assert res.status_code == 400 and "minimum order for Cabbage is 3 bag" in res.json()["detail"]
+    assert res.status_code == 400 and "minimum order for Cabbage is 3 bags" in res.json()["detail"]
     res = checkout(client, current, consumer_id, product_id, quantity=21)
-    assert res.status_code == 400 and "Only 20 bag" in res.json()["detail"]
+    assert res.status_code == 400 and "Only 20 bags" in res.json()["detail"]
     res = checkout(client, current, consumer_id, product_id, quantity=3.5)
-    assert res.status_code == 400 and "whole bag" in res.json()["detail"]
+    assert res.status_code == 400 and "whole bags" in res.json()["detail"]
 
     res = checkout(client, current, consumer_id, product_id, quantity=3)
     assert res.status_code == 201, res.text
-    # The order carries the unit, so the farmer sees "3 bag"
-    assert res.json()["orders"][0]["quantity_ordered"] == "3 bag"
+    # The order carries the unit, so the farmer sees "3 bags"
+    assert res.json()["orders"][0]["quantity_ordered"] == "3 bags"
     assert res.json()["subtotal"] == 3 * 1200
 
 

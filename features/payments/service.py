@@ -68,6 +68,9 @@ def payment_response(payment: Payment) -> PaymentResponse:
         amount=payment.amount,
         paid_at=payment.paid_at,
         gateway_response=payment.gateway_response,
+        purpose=payment.purpose or "order",
+        group_public_id=(payment.group_member.group.public_id
+                         if payment.purpose == "group_buy" and payment.group_member else None),
         orders=[
             PaymentOrder(
                 public_id=order.public_id,
@@ -216,19 +219,31 @@ class PaymentService:
                 payment.status = PaymentStatus.FAILED.value
                 payment.gateway_response = "Amount paid doesn't match the order total. Contact support."
                 self.db.commit()
+                self._payment_failed(payment)
                 return payment
             self._mark_paid(payment, background_tasks)
         elif status in (PaymentStatus.FAILED.value, PaymentStatus.ABANDONED.value, "reversed"):
             payment.status = PaymentStatus.ABANDONED.value if status == "abandoned" else PaymentStatus.FAILED.value
             self.db.commit()
+            self._payment_failed(payment)
         else:
             # ongoing / pending / queued: leave it pending and let the buyer check again
             self.db.commit()
         return payment
 
+    def _payment_failed(self, payment: Payment) -> None:
+        if payment.purpose == "group_buy":
+            from features.group_buy.payments import GroupPaymentService
+            GroupPaymentService(self.db).payment_failed(payment)
+
     def _mark_paid(self, payment: Payment, background_tasks: BackgroundTasks) -> None:
         payment.status = PaymentStatus.SUCCESS.value
         payment.paid_at = datetime.now(timezone.utc)
+        if payment.purpose == "group_buy":
+            self.db.commit()
+            from features.group_buy.payments import GroupPaymentService
+            GroupPaymentService(self.db).payment_succeeded(payment, background_tasks)
+            return
         for order in payment.orders:
             order.payment_status = OrderPaymentStatus.PAID
         self.db.commit()

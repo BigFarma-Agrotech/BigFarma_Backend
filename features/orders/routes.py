@@ -80,12 +80,19 @@ async def get_my_orders(
         order_filter = OrderFilter(status=status, search=search)
     
     orders = service.get_user_orders(current_user.id, order_filter)
-    
+
+    # Every farm profile the list needs, in one query (not one per order)
+    farmer_ids = {order.product.farmer_id for order in orders if order.product}
+    profiles = {
+        profile.user_id: profile
+        for profile in db.query(FarmerProfile).filter(FarmerProfile.user_id.in_(farmer_ids))
+    } if farmer_ids else {}
+
     # Transform to response format
     order_responses = []
     for order in orders:
         product = order.product
-        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
+        farmer_profile = profiles.get(product.farmer_id)
         
         # Parse images
         product_images = public_images(product)

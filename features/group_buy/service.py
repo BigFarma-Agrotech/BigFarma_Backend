@@ -1,8 +1,10 @@
 import logging
 import uuid
 from utils.product_images import public_images
+from utils.units import format_quantity, is_count_unit, unit_label
+from features.group_buy.payments import join_minimum, remaining_quantity, unit_price
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, or_, func, desc
 
@@ -18,6 +20,21 @@ from features.marketplace.models import Product, AvailabilityStatus
 from features.auth.models import User
 
 logger = logging.getLogger(__name__)
+
+def _as_utc(value: datetime) -> datetime:
+    """Deadlines may arrive with or without a timezone; compare them in UTC."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def _mask(contact: Optional[str]) -> str:
+    """ "jane.smith@gmail.com" -> "ja***@gmail.com"; phone numbers keep the last 3 digits."""
+    if not contact:
+        return "Member"
+    if "@" in contact:
+        name, domain = contact.split("@", 1)
+        return f"{name[:2]}***@{domain}"
+    return f"***{contact[-3:]}"
+
 
 class GroupBuyService:
     def __init__(self, db: Session):
@@ -38,38 +55,53 @@ class GroupBuyService:
                     product_id = product.id
                 else:
                     raise ValueError(f"Product '{group_data.product_name}' not found or not available")
-            
+
             # Validate product exists and is available
             product = self.db.query(Product).filter(
                 Product.id == product_id,
                 Product.availability == AvailabilityStatus.IN_STOCK,
                 Product.is_listed == True
             ).first()
-            
+
             if not product:
                 raise ValueError("Product not found or not available")
-            
-            # Auto-calculate individual_contribution if not provided
-            individual_contribution = group_data.individual_contribution
-            if not individual_contribution:
-                # Calculate as product price divided by estimated 10 members
-                estimated_members = 10
-                total_cost = product.price * group_data.target_quantity_numeric
-                individual_contribution = total_cost / estimated_members
-            
-            # Validate quantity unit (already validated in schema)
-            quantity_unit = group_data.quantity_unit
-            
+
+            if group_data.deadline and _as_utc(group_data.deadline) <= datetime.now(timezone.utc):
+                raise ValueError("The deadline must be in the future")
+
+            # Members pay per unit of the product (its discounted price)
+            individual_contribution = round(product.price * (1 - (product.discount_percentage or 0) / 100), 2)
+
+            # The group buys in the product's own unit, within the farmer's
+            # minimum order and current stock
+            quantity_unit = product.unit or group_data.quantity_unit
+            target = group_data.target_quantity_numeric
+            stock = product.available_quantity
+            if is_count_unit(quantity_unit) and not float(target).is_integer():
+                raise ValueError(f"The target must be a whole number of {quantity_unit}")
+            if target + 1e-9 < (product.min_order_quantity or 1):
+                raise ValueError(f"The target must be at least the farmer's minimum order of "
+                                 f"{format_quantity(product.min_order_quantity or 1, quantity_unit)}")
+            if stock is not None and target > stock + 1e-9:
+                raise ValueError(f"The farmer only has {format_quantity(stock, quantity_unit)} in stock")
+
+            # The least each member buys when joining (defaults to one unit)
+            min_member_quantity = group_data.min_member_quantity or 1
+            if is_count_unit(quantity_unit) and not float(min_member_quantity).is_integer():
+                raise ValueError(f"The minimum share must be a whole number of {unit_label(2, quantity_unit)}")
+            if min_member_quantity > target + 1e-9:
+                raise ValueError("The minimum share can't be more than the group's target")
+
             # Generate unique shareable link
             shareable_link = self._generate_shareable_link()
-            
+
             # Create group
             group = GroupBuy(
                 group_name=group_data.group_name,
                 group_description=group_data.group_description,
                 group_location=group_data.group_location,
                 product_id=product_id,
-                target_quantity=group_data.target_quantity,
+                target_quantity=format_quantity(target, quantity_unit),
                 target_quantity_numeric=group_data.target_quantity_numeric,
                 quantity_unit=quantity_unit,
                 creator_id=creator_id,
@@ -78,26 +110,15 @@ class GroupBuyService:
                 status=GroupStatus.ACTIVE,
                 is_public=group_data.is_public,
                 max_members=group_data.max_members,
-                deadline=group_data.deadline
+                deadline=group_data.deadline,
+                min_member_quantity=min_member_quantity
             )
-            
+
+            # The creator joins by paying for their share, like everyone else
             self.db.add(group)
-            self.db.flush()  # Get the ID
-            
-            # Add creator as first member
-            creator_member = GroupMember(
-                group_id=group.id,
-                user_id=creator_id,
-                status=GroupMemberStatus.ACTIVE,
-                joined_at=datetime.utcnow(),
-                contribution_amount=individual_contribution,
-                quantity_committed=group_data.target_quantity_numeric / 10  # Creator commits to 10% initially
-            )
-            
-            self.db.add(creator_member)
             self.db.commit()
             self.db.refresh(group)
-            
+
             # Create group chat
             try:
                 from features.group_buy.chat_service import ChatService
@@ -107,19 +128,19 @@ class GroupBuyService:
             except Exception as chat_error:
                 logger.warning(f"Failed to create chat for group {group.id}: {chat_error}")
                 # Don't fail the entire group creation if chat creation fails
-            
+
             # Send notification to creator
             self._send_notification(
                 group_id=group.id,
                 user_id=creator_id,
                 notification_type="group_created",
                 title="Group Created Successfully",
-                message=f"Your group '{group.group_name}' has been created. Share the link to invite others!"
+                message=f"Your group '{group.group_name}' has been created. Pay for your share and share the link to invite others!"
             )
-            
+
             logger.info(f"Group {group.id} created by user {creator_id}")
             return group
-            
+
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error creating group: {str(e)}")
@@ -133,26 +154,26 @@ class GroupBuyService:
                 GroupBuy.id == join_data.group_id,
                 GroupBuy.status == GroupStatus.ACTIVE
             ).first()
-            
+
             if not group:
                 raise ValueError("Group not found or not active")
-            
+
             # Check if user is already a member
             existing_member = self.db.query(GroupMember).filter(
                 GroupMember.group_id == join_data.group_id,
                 GroupMember.user_id == user_id,
                 GroupMember.status.in_([GroupMemberStatus.ACTIVE, GroupMemberStatus.PENDING])
             ).first()
-            
+
             if existing_member:
                 raise ValueError("User is already a member of this group")
-            
+
             # Check if group has space (optional limit)
             current_members = self.db.query(GroupMember).filter(
                 GroupMember.group_id == join_data.group_id,
                 GroupMember.status == GroupMemberStatus.ACTIVE
             ).count()
-            
+
             # Create member record
             member = GroupMember(
                 group_id=join_data.group_id,
@@ -162,30 +183,30 @@ class GroupBuyService:
                 contribution_amount=join_data.contribution_amount,
                 quantity_committed=join_data.quantity_committed
             )
-            
+
             self.db.add(member)
             self.db.commit()
             self.db.refresh(member)
-            
+
             # Update group progress
             self._update_group_progress(join_data.group_id)
-            
+
             # Add user to group chat
             try:
                 from features.group_buy.chat_service import ChatService
                 chat_service = ChatService(self.db)
-                
+
                 # Get or create chat for the group
                 chat = group.chat
                 if not chat:
                     chat = await chat_service.create_group_chat(join_data.group_id)
-                
+
                 # Add member to chat
                 await chat_service.add_member_to_chat(chat.id, user_id)
                 logger.info(f"User {user_id} added to chat for group {join_data.group_id}")
             except Exception as chat_error:
                 logger.warning(f"Failed to add user {user_id} to chat for group {join_data.group_id}: {chat_error}")
-            
+
             # Send notifications
             self._send_notification(
                 group_id=join_data.group_id,
@@ -194,7 +215,7 @@ class GroupBuyService:
                 title="Welcome to the Group!",
                 message=f"You've successfully joined the group '{group.group_name}'"
             )
-            
+
             # Notify other members
             self._notify_group_members(
                 group_id=join_data.group_id,
@@ -203,10 +224,10 @@ class GroupBuyService:
                 title="New Member Joined",
                 message="A new member has joined your group!"
             )
-            
+
             logger.info(f"User {user_id} joined group {join_data.group_id}")
             return member
-            
+
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error joining group: {str(e)}")
@@ -220,17 +241,19 @@ class GroupBuyService:
             joinedload(GroupBuy.members).joinedload(GroupMember.user),
             joinedload(GroupBuy.transactions)
         ).filter(GroupBuy.id == group_id).first()
-        
+
         if not group:
             raise ValueError("Group not found")
-        
-        # Get members with their details
+
+        # Get members with their details (paid members only; contact details masked)
         members = []
         for member in group.members:
+            if member.status != GroupMemberStatus.ACTIVE:
+                continue
             member_data = {
                 "id": member.id,
                 "user_id": member.user_id,
-                "user_name": member.user.email or member.user.phone_number,
+                "user_name": "You" if member.user_id == user_id else _mask(member.user.email or member.user.phone_number),
                 "status": member.status,
                 "contribution_amount": member.contribution_amount,
                 "quantity_committed": member.quantity_committed,
@@ -238,7 +261,7 @@ class GroupBuyService:
                 "left_at": member.left_at
             }
             members.append(member_data)
-        
+
         # Get transactions
         transactions = []
         for transaction in group.transactions:
@@ -252,7 +275,7 @@ class GroupBuyService:
                 "completed_at": transaction.completed_at
             }
             transactions.append(transaction_data)
-        
+
         return {
             "id": group.id,
             "public_id": group.public_id,
@@ -284,17 +307,28 @@ class GroupBuyService:
                 "name": group.product.name,
                 "category": group.product.category,
                 "price": group.product.price,
+                "unit": group.product.unit,
                 "location": group.product.location,
                 "images": public_images(group.product),
                 "availability": group.product.availability
             },
+            # What the join form needs: price per unit and how much is still needed
+            "unit_price": unit_price(group),
+            "remaining_quantity": remaining_quantity(group),
+            "min_member_quantity": group.min_member_quantity or 1,
+            "join_minimum": join_minimum(group),
+            "members_count": len(members),
             "creator": {
                 "id": group.creator.id,
-                "email": group.creator.email,
-                "phone_number": group.creator.phone_number
+                "name": _mask(group.creator.email or group.creator.phone_number),
             },
             "members": members,
             "transactions": transactions,
+            # Read by the share, invite and chat endpoints
+            "group": {
+                "shareable_link": group.shareable_link,
+                "chat": {"id": group.chat.id} if group.chat else None,
+            },
             "is_member": user_id in [m.user_id for m in group.members if m.status == GroupMemberStatus.ACTIVE] if user_id else False,
             "is_creator": group.creator_id == user_id if user_id else False
         }
@@ -304,17 +338,17 @@ class GroupBuyService:
         group = self.db.query(GroupBuy).filter(GroupBuy.id == group_id).first()
         if not group:
             raise ValueError("Group not found")
-        
+
         # Calculate days remaining (if group has a deadline)
         days_remaining = None
         estimated_completion_date = None
-        
+
         # Get active members count
         members_count = self.db.query(GroupMember).filter(
             GroupMember.group_id == group_id,
             GroupMember.status == GroupMemberStatus.ACTIVE
         ).count()
-        
+
         return GroupProgressResponse(
             group_id=group_id,
             current_quantity=group.current_quantity,
@@ -335,10 +369,10 @@ class GroupBuyService:
                 GroupMember.user_id == user_id,
                 GroupMember.status == GroupMemberStatus.ACTIVE
             ).first()
-            
+
             if not member:
                 raise ValueError("User is not an active member of this group")
-            
+
             # Create transaction
             transaction = GroupTransaction(
                 group_id=group_id,
@@ -348,28 +382,28 @@ class GroupBuyService:
                 payment_method=payment_method,
                 status="completed"
             )
-            
+
             self.db.add(transaction)
-            
+
             # Update member contribution
             member.contribution_amount += amount
-            
+
             # Update group wallet
             group = self.db.query(GroupBuy).filter(GroupBuy.id == group_id).first()
             group.group_wallet_balance += amount
-            
+
             self.db.commit()
             self.db.refresh(transaction)
-            
+
             # Update progress
             self._update_group_progress(group_id)
-            
+
             # Check if group should be locked for purchase
             await self._check_and_trigger_purchase(group_id)
-            
+
             logger.info(f"Contribution of {amount} added to group {group_id} by user {user_id}")
             return transaction
-            
+
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error adding contribution: {str(e)}")
@@ -380,22 +414,22 @@ class GroupBuyService:
         group = self.db.query(GroupBuy).filter(GroupBuy.id == group_id).first()
         if not group:
             return
-        
+
         # Calculate current quantity from active members
         active_members = self.db.query(GroupMember).filter(
             GroupMember.group_id == group_id,
             GroupMember.status == GroupMemberStatus.ACTIVE
         ).all()
-        
+
         current_quantity = sum(member.quantity_committed for member in active_members)
         progress_percentage = (current_quantity / group.target_quantity_numeric) * 100
-        
+
         # Update group
         group.current_quantity = current_quantity
         group.progress_percentage = min(progress_percentage, 100.0)
-        
+
         self.db.commit()
-        
+
         # Send progress notification if significant change
         if progress_percentage >= 25 and progress_percentage < 50:
             self._notify_group_members(
@@ -424,15 +458,15 @@ class GroupBuyService:
         group = self.db.query(GroupBuy).filter(GroupBuy.id == group_id).first()
         if not group:
             return
-        
+
         # Check if target is reached
         if group.progress_percentage >= 100.0 and group.status == GroupStatus.ACTIVE:
             # Lock the group
             group.status = GroupStatus.LOCKED
             group.locked_at = datetime.utcnow()
-            
+
             self.db.commit()
-            
+
             # Close group chat and send completion message
             try:
                 from features.group_buy.chat_service import ChatService
@@ -444,13 +478,13 @@ class GroupBuyService:
                         message="🎉 Congratulations! The group has reached its target quantity and the purchase has been automatically triggered! The chat will now be closed.",
                         message_type=MessageType.COMPLETION_NOTICE
                     )
-                    
+
                     # Close the chat
                     await chat_service.close_chat(group.chat.id, "Group purchase completed")
                     logger.info(f"Chat closed for completed group {group_id}")
             except Exception as chat_error:
                 logger.warning(f"Failed to close chat for group {group_id}: {chat_error}")
-            
+
             # Notify all members
             self._notify_group_members(
                 group_id=group_id,
@@ -458,14 +492,14 @@ class GroupBuyService:
                 title="Purchase Triggered!",
                 message="Your group has reached the target quantity and the purchase has been automatically triggered!"
             )
-            
+
             # TODO: Implement actual purchase logic here
             # This would involve:
             # 1. Creating a bulk order
             # 2. Processing payments
             # 3. Coordinating delivery
             # 4. Updating group status to COMPLETED
-            
+
             logger.info(f"Group {group_id} purchase triggered - target quantity reached")
 
     def _generate_shareable_link(self) -> str:
@@ -482,22 +516,22 @@ class GroupBuyService:
             title=title,
             message=message
         )
-        
+
         self.db.add(notification)
         self.db.commit()
 
-    def _notify_group_members(self, group_id: int, exclude_user_id: Optional[int] = None, 
-                            notification_type: str = "group_update", title: str = "Group Update", 
+    def _notify_group_members(self, group_id: int, exclude_user_id: Optional[int] = None,
+                            notification_type: str = "group_update", title: str = "Group Update",
                             message: str = "There's an update to your group"):
         """Send notification to all active group members"""
         members = self.db.query(GroupMember).filter(
             GroupMember.group_id == group_id,
             GroupMember.status == GroupMemberStatus.ACTIVE
         )
-        
+
         if exclude_user_id:
             members = members.filter(GroupMember.user_id != exclude_user_id)
-        
+
         for member in members:
             self._send_notification(
                 group_id=group_id,
@@ -509,16 +543,21 @@ class GroupBuyService:
 
     def get_user_groups(self, user_id: int, status: Optional[GroupStatus] = None) -> List[GroupBuy]:
         """Get all groups for a user"""
-        query = self.db.query(GroupBuy).join(GroupMember).filter(
+        # Groups the user paid into, plus the ones they created (even before paying)
+        member_of = self.db.query(GroupMember.group_id).filter(
             GroupMember.user_id == user_id,
             GroupMember.status == GroupMemberStatus.ACTIVE
         )
-        
+        query = self.db.query(GroupBuy).filter(
+            (GroupBuy.id.in_(member_of)) | (GroupBuy.creator_id == user_id)
+        )
+
         if status:
             query = query.filter(GroupBuy.status == status)
-        
-        # The ORM rows carry every field GroupBuyResponse needs
-        return query.all()
+
+        # The ORM rows carry every field GroupBuyResponse needs; the product is
+        # loaded alongside for product_public_id (not one query per group)
+        return query.options(joinedload(GroupBuy.product)).all()
 
     def leave_group(self, group_id: int, user_id: int) -> bool:
         """Leave a group"""
@@ -528,22 +567,22 @@ class GroupBuyService:
                 GroupMember.user_id == user_id,
                 GroupMember.status == GroupMemberStatus.ACTIVE
             ).first()
-            
+
             if not member:
                 raise ValueError("User is not a member of this group")
-            
+
             # Check if user is the creator
             group = self.db.query(GroupBuy).filter(GroupBuy.id == group_id).first()
             if group.creator_id == user_id:
                 raise ValueError("Group creator cannot leave the group")
-            
+
             # Update member status
             member.status = GroupMemberStatus.LEFT
             member.left_at = datetime.utcnow()
-            
+
             # Update group progress
             self._update_group_progress(group_id)
-            
+
             # Notify other members
             self._notify_group_members(
                 group_id=group_id,
@@ -552,11 +591,11 @@ class GroupBuyService:
                 title="Member Left Group",
                 message="A member has left your group"
             )
-            
+
             self.db.commit()
             logger.info(f"User {user_id} left group {group_id}")
             return True
-            
+
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error leaving group: {str(e)}")
@@ -570,19 +609,19 @@ class GroupBuyService:
                 GroupBuy.creator_id == user_id,
                 GroupBuy.status == GroupStatus.ACTIVE
             ).first()
-            
+
             if not group:
                 raise ValueError("Group not found or user is not the creator")
-            
+
             # Update group status
             group.status = GroupStatus.CANCELLED
-            
+
             # Update all members status
             self.db.query(GroupMember).filter(
                 GroupMember.group_id == group_id,
                 GroupMember.status == GroupMemberStatus.ACTIVE
             ).update({"status": GroupMemberStatus.LEFT})
-            
+
             # Notify all members
             self._notify_group_members(
                 group_id=group_id,
@@ -590,11 +629,11 @@ class GroupBuyService:
                 title="Group Cancelled",
                 message="The group has been cancelled by the creator"
             )
-            
+
             self.db.commit()
             logger.info(f"Group {group_id} cancelled by user {user_id}")
             return True
-            
+
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error cancelling group: {str(e)}")
@@ -608,50 +647,50 @@ class GroupBuyService:
                 GroupBuy.creator_id == user_id,
                 GroupBuy.status == GroupStatus.ACTIVE
             ).first()
-            
+
             if not group:
                 raise ValueError("Group not found or user is not the creator")
-            
+
             # Check if group has members (restrict certain updates)
             current_members = self.db.query(GroupMember).filter(
                 GroupMember.group_id == group_id,
                 GroupMember.status == GroupMemberStatus.ACTIVE
             ).count()
-            
+
             # Update allowed fields
             if update_data.group_name is not None:
                 group.group_name = update_data.group_name
-            
+
             if update_data.group_description is not None:
                 group.group_description = update_data.group_description
-            
+
             if update_data.group_location is not None:
                 group.group_location = update_data.group_location
-            
+
             # Only allow quantity updates if no members have joined
             if current_members == 0:
                 if update_data.target_quantity is not None:
                     group.target_quantity = update_data.target_quantity
-                
+
                 if update_data.target_quantity_numeric is not None:
                     group.target_quantity_numeric = update_data.target_quantity_numeric
-                
+
                 if update_data.quantity_unit is not None:
                     group.quantity_unit = update_data.quantity_unit
-                
+
                 if update_data.individual_contribution is not None:
                     group.individual_contribution = update_data.individual_contribution
             else:
                 # If members exist, only allow minor updates
                 if update_data.target_quantity is not None or update_data.target_quantity_numeric is not None:
                     raise ValueError("Cannot change target quantity when group has members")
-                
+
                 if update_data.individual_contribution is not None:
                     raise ValueError("Cannot change individual contribution when group has members")
-            
+
             self.db.commit()
             self.db.refresh(group)
-            
+
             # Send notification to members about group update
             self._notify_group_members(
                 group_id=group_id,
@@ -659,10 +698,10 @@ class GroupBuyService:
                 title="Group Updated",
                 message="The group details have been updated by the creator"
             )
-            
+
             logger.info(f"Group {group_id} updated by user {user_id}")
             return group
-            
+
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error updating group: {str(e)}")
@@ -676,10 +715,10 @@ class GroupBuyService:
                 GroupBuy.id == group_id,
                 GroupBuy.creator_id == user_id
                 ).first()
-            
+
                 if not group:
                     raise ValueError("Group not found or user is not the creator")
-            
+
             # Only allow deletion of empty groups or cancelled groups
                 if group.status == GroupStatus.ACTIVE:
                 # Check if group has any active members
@@ -687,19 +726,19 @@ class GroupBuyService:
                     GroupMember.group_id == group_id,
                     GroupMember.status == GroupMemberStatus.ACTIVE
                     ).count()
-                
+
                     if active_members > 1:  # Allow if only creator is member
                         raise ValueError("Cannot delete group with active members. Cancel the group first.")
-            
+
             # Check for pending join requests
                 pending_requests = self.db.query(GroupJoinRequest).filter(
                 GroupJoinRequest.group_id == group_id,
                 GroupJoinRequest.status == "pending"
                 ).count()
-            
+
                 if pending_requests > 0:
                     raise ValueError("Cannot delete group with pending join requests. Cancel the group first.")
-            
+
                 # Notify all members about group deletion
                 if group.status == GroupStatus.ACTIVE:
                     self._notify_group_members(
@@ -708,14 +747,14 @@ class GroupBuyService:
                         title="Group Deleted",
                     message="The group has been permanently deleted by the creator"
                     )
-            
+
                 # Delete the group (cascade will handle related entities)
                 self.db.delete(group)
                 self.db.commit()
-            
+
                 logger.info(f"Group {group_id} deleted by user {user_id}")
                 return True
-            
+
             except Exception as e:
                 self.db.rollback()
                 logger.error(f"Error deleting group: {str(e)}")
@@ -732,23 +771,23 @@ class GroupBuyService:
                 GroupBuy.is_public == True,
                 GroupBuy.status == GroupStatus.ACTIVE
             )
-            
+
             # Apply filters
             if discovery_request.location:
                 query = query.filter(GroupBuy.group_location.ilike(f"%{discovery_request.location}%"))
-            
+
             if discovery_request.product_name:
                 query = query.join(Product).filter(Product.name.ilike(f"%{discovery_request.product_name}%"))
-            
+
             if discovery_request.category:
                 query = query.join(Product).filter(Product.category == discovery_request.category)
-            
+
             if discovery_request.min_price:
                 query = query.filter(GroupBuy.individual_contribution >= discovery_request.min_price)
-            
+
             if discovery_request.max_price:
                 query = query.filter(GroupBuy.individual_contribution <= discovery_request.max_price)
-            
+
             # Apply sorting
             if discovery_request.sort_by == "newest":
                 query = query.order_by(desc(GroupBuy.created_at))
@@ -760,9 +799,9 @@ class GroupBuyService:
                 query = query.order_by(desc(GroupBuy.individual_contribution))
             elif discovery_request.sort_by == "progress":
                 query = query.order_by(desc(GroupBuy.progress_percentage))
-            
+
             groups = query.offset(skip).limit(limit).all()
-            
+
             result = []
             for group in groups:
                 # Calculate slots remaining
@@ -770,9 +809,9 @@ class GroupBuyService:
                     GroupMember.group_id == group.id,
                     GroupMember.status == GroupMemberStatus.ACTIVE
                 ).count()
-                
+
                 slots_remaining = (group.max_members - current_members) if group.max_members else None
-                
+
                 group_data = GroupPublicResponse(
                     id=group.id,
                     public_id=group.public_id,
@@ -796,9 +835,9 @@ class GroupBuyService:
                     is_public=group.is_public
                 )
                 result.append(group_data)
-            
+
             return result
-            
+
         except Exception as e:
             logger.error(f"Error fetching public groups: {str(e)}")
             raise
@@ -815,18 +854,18 @@ class GroupBuyService:
                 GroupBuy.is_public == True,
                 GroupBuy.status == GroupStatus.ACTIVE
             ).first()
-            
+
             if not group:
                 raise ValueError("Group not found or not public")
-            
+
             # Calculate slots remaining
             current_members = self.db.query(GroupMember).filter(
                 GroupMember.group_id == group_id,
                 GroupMember.status == GroupMemberStatus.ACTIVE
             ).count()
-            
+
             slots_remaining = (group.max_members - current_members) if group.max_members else None
-            
+
             return {
                 "group": {
                     "id": group.id,
@@ -863,7 +902,7 @@ class GroupBuyService:
                 "members_count": current_members,
                 "is_public": group.is_public
             }
-            
+
         except Exception as e:
             logger.error(f"Error fetching public group details: {str(e)}")
             raise
@@ -876,7 +915,7 @@ class GroupBuyService:
                 GroupBuy.is_public == True,
                 GroupBuy.status == GroupStatus.ACTIVE
             ).first()
-            
+
             if not group:
                 return GroupJoinValidationResponse(
                     can_join=False,
@@ -886,14 +925,14 @@ class GroupBuyService:
                     deadline=None,
                     conflicts=[]
                 )
-            
+
             # Check if user is already a member
             existing_member = self.db.query(GroupMember).filter(
                 GroupMember.group_id == group_id,
                 GroupMember.user_id == user_id,
                 GroupMember.status.in_([GroupMemberStatus.ACTIVE, GroupMemberStatus.PENDING])
             ).first()
-            
+
             if existing_member:
                 return GroupJoinValidationResponse(
                     can_join=False,
@@ -903,13 +942,13 @@ class GroupBuyService:
                     deadline=group.deadline,
                     conflicts=["already_member"]
                 )
-            
+
             # Check member limit
             current_members = self.db.query(GroupMember).filter(
                 GroupMember.group_id == group_id,
                 GroupMember.status == GroupMemberStatus.ACTIVE
             ).count()
-            
+
             if group.max_members and current_members >= group.max_members:
                 return GroupJoinValidationResponse(
                     can_join=False,
@@ -919,7 +958,7 @@ class GroupBuyService:
                     deadline=group.deadline,
                     conflicts=["group_full"]
                 )
-            
+
             # Check deadline
             if group.deadline and group.deadline < datetime.utcnow():
                 return GroupJoinValidationResponse(
@@ -930,9 +969,9 @@ class GroupBuyService:
                     deadline=group.deadline,
                     conflicts=["deadline_passed"]
                 )
-            
+
             slots_available = (group.max_members - current_members) if group.max_members else 999
-            
+
             return GroupJoinValidationResponse(
                 can_join=True,
                 reason=None,
@@ -941,7 +980,7 @@ class GroupBuyService:
                 deadline=group.deadline,
                 conflicts=[]
             )
-            
+
         except Exception as e:
             logger.error(f"Error validating group join: {str(e)}")
             raise
@@ -952,20 +991,20 @@ class GroupBuyService:
             group = self.db.query(GroupBuy).filter(GroupBuy.id == group_id).first()
             if not group:
                 raise ValueError("Group not found")
-            
+
             # Get product price
             product = self.db.query(Product).filter(Product.id == group.product_id).first()
             if not product:
                 raise ValueError("Product not found")
-            
+
             unit_price = product.price
             total_price = unit_price * quantity
-            
+
             # Calculate discount (placeholder - could be based on quantity or group size)
             discount_percentage = 0.0  # TODO: Implement actual discount logic
             savings_amount = total_price * (discount_percentage / 100)
             final_price = total_price - savings_amount
-            
+
             return GroupPricingResponse(
                 group_id=group_id,
                 quantity=quantity,
@@ -974,7 +1013,7 @@ class GroupBuyService:
                 discount_percentage=discount_percentage,
                 savings_amount=savings_amount
             )
-            
+
         except Exception as e:
             logger.error(f"Error calculating group pricing: {str(e)}")
             raise
@@ -988,15 +1027,15 @@ class GroupBuyService:
                 GroupBuy.is_public == True,
                 GroupBuy.status == GroupStatus.ACTIVE
             ).first()
-            
+
             if not group:
                 raise ValueError("Group not found or not public")
-            
+
             # Validate user can join
             validation = self.validate_group_join(join_request.group_id, user_id)
             if not validation.can_join:
                 raise ValueError(validation.reason)
-            
+
             # Create join request
             join_request_db = GroupJoinRequest(
                 group_id=join_request.group_id,
@@ -1007,17 +1046,17 @@ class GroupBuyService:
                 payment_status="pending",  # Placeholder
                 status="pending"
             )
-            
+
             self.db.add(join_request_db)
             self.db.commit()
             self.db.refresh(join_request_db)
-            
+
             # TODO: Implement actual payment processing
             # For now, we'll simulate successful payment
             join_request_db.payment_status = "completed"
             join_request_db.status = "approved"
             join_request_db.approved_at = datetime.utcnow()
-            
+
             # Add user as group member
             member = GroupMember(
                 group_id=join_request.group_id,
@@ -1027,13 +1066,13 @@ class GroupBuyService:
                 contribution_amount=join_request.contribution_amount,
                 quantity_committed=join_request.quantity_requested
             )
-            
+
             self.db.add(member)
             self.db.commit()
-            
+
             # Update group progress
             self._update_group_progress(join_request.group_id)
-            
+
             # Send notifications
             self._send_notification(
                 group_id=join_request.group_id,
@@ -1042,7 +1081,7 @@ class GroupBuyService:
                 title="Successfully Joined Group!",
                 message=f"You've successfully joined the group '{group.group_name}'"
             )
-            
+
             # Notify other members
             self._notify_group_members(
                 group_id=join_request.group_id,
@@ -1051,9 +1090,9 @@ class GroupBuyService:
                 title="New Member Joined",
                 message="A new member has joined your group!"
             )
-            
+
             logger.info(f"User {user_id} joined group {join_request.group_id}")
-            
+
             return GroupJoinResponse(
                 id=join_request_db.id,
                 group_id=join_request_db.group_id,
@@ -1065,7 +1104,7 @@ class GroupBuyService:
                 status=join_request_db.status,
                 created_at=join_request_db.created_at
             )
-            
+
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error requesting group join: {str(e)}")
