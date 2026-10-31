@@ -66,6 +66,32 @@ async def mark_notification_read(
     service.push_unread_count(current_user.id, background_tasks)
     return notification
 
+# No trailing slash (see the list route): this clears every notification
+@router.delete("", include_in_schema=False)
+@router.delete("/")
+async def clear_notifications(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    service = NotificationService(db)
+    deleted = service.delete_all(current_user.id)
+    service.push_unread_count(current_user.id, background_tasks)
+    return {"message": "All notifications cleared", "deleted": deleted}
+
+@router.delete("/{notification_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_notification(
+    notification_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    service = NotificationService(db)
+    if not service.delete(notification_id, current_user.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
+    # Deleting an unread one changes the badge on the user's other tabs
+    service.push_unread_count(current_user.id, background_tasks)
+
 # Close codes in the 4000-4999 range are application-defined
 WS_UNAUTHORIZED = 4001
 WS_TOKEN_EXPIRED = 4002

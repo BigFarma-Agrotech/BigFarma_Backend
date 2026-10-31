@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: Optional[str] = None
     TWILIO_PHONE_NUMBER: Optional[str] = None
 
+    # Notifications older than this are deleted automatically
+    NOTIFICATION_RETENTION_DAYS: int = 30
+
     # OTP Configuration
     OTP_EXPIRE_MINUTES: int = 10
     OTP_LENGTH: int = 6

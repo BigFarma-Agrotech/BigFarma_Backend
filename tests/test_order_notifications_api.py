@@ -131,3 +131,38 @@ def test_list_routes_answer_without_trailing_slash(env):
         res = client.get(path, follow_redirects=False)
         assert res.status_code == 200, (path, res.status_code)
         assert isinstance(res.json(), list)
+
+
+def test_delete_clear_and_expiry(env):
+    from datetime import datetime, timedelta, timezone
+    from features.notifications.models import Notification
+    import main
+    from database import get_db
+
+    client, current, farmer_id, consumer_id, product_id, _ = env
+    for _ in range(3):
+        client.post("/api/v1/orders", json={"product_id": product_id, "quantity_ordered": "1",
+                                            "delivery_address": "12 Farm Rd, Lekki"})
+    current["user_id"] = farmer_id
+    notes = client.get("/api/v1/notifications").json()
+    assert len(notes) == 3
+
+    # Delete one; another user's id can't be deleted
+    assert client.delete(f"/api/v1/notifications/{notes[0]['id']}").status_code == 204
+    assert client.delete(f"/api/v1/notifications/{notes[0]['id']}").status_code == 404
+    assert len(client.get("/api/v1/notifications").json()) == 2
+    assert client.get("/api/v1/notifications/unread-count").json() == {"unread_count": 2}
+
+    # One past the retention period disappears from the list and the count
+    db = next(main.app.dependency_overrides[get_db]())
+    old = db.get(Notification, notes[1]["id"])
+    old.created_at = datetime.now(timezone.utc) - timedelta(days=31)
+    db.commit()
+    assert [n["id"] for n in client.get("/api/v1/notifications").json()] == [notes[2]["id"]]
+    assert db.get(Notification, notes[1]["id"]) is None  # actually deleted
+
+    # Clear all
+    res = client.delete("/api/v1/notifications")
+    assert res.status_code == 200 and res.json()["deleted"] == 1
+    assert client.get("/api/v1/notifications").json() == []
+    assert client.get("/api/v1/notifications/unread-count").json() == {"unread_count": 0}

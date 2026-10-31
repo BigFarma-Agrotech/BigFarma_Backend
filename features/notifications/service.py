@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import BackgroundTasks
@@ -10,6 +10,7 @@ from features.marketplace.models import Order, OrderStatus, Product
 from features.notifications.connection_manager import notification_manager
 from features.notifications.models import Notification, NotificationType
 from features.notifications.schemas import NotificationResponse
+from config import settings
 from database import SessionLocal
 from services.email_service import email_service
 from services.login_context import describe_device, lookup_location
@@ -65,8 +66,35 @@ class NotificationService:
                 n.reference_public_id, n.product_public_id = public_ids[n.reference_id]
         return notifications
 
+    def delete_expired(self, user_id: Optional[int] = None) -> int:
+        """Delete notifications past the retention period (for one user, or everyone)."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=settings.NOTIFICATION_RETENTION_DAYS)
+        query = self.db.query(Notification).filter(Notification.created_at < cutoff)
+        if user_id is not None:
+            query = query.filter(Notification.user_id == user_id)
+        deleted = query.delete(synchronize_session=False)
+        self.db.commit()
+        return deleted
+
+    def delete(self, notification_id: int, user_id: int) -> bool:
+        deleted = self.db.query(Notification).filter(
+            Notification.id == notification_id,
+            Notification.user_id == user_id
+        ).delete(synchronize_session=False)
+        self.db.commit()
+        return bool(deleted)
+
+    def delete_all(self, user_id: int) -> int:
+        deleted = self.db.query(Notification).filter(
+            Notification.user_id == user_id
+        ).delete(synchronize_session=False)
+        self.db.commit()
+        return deleted
+
     def get_user_notifications(self, user_id: int, unread_only: bool = False,
                                skip: int = 0, limit: int = 50) -> List[Notification]:
+        # Expired ones never show, even between the periodic sweeps
+        self.delete_expired(user_id)
         query = self.db.query(Notification).filter(Notification.user_id == user_id)
         if unread_only:
             query = query.filter(Notification.is_read.is_(False))
@@ -74,9 +102,11 @@ class NotificationService:
         return self.with_references(notifications)
 
     def get_unread_count(self, user_id: int) -> int:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=settings.NOTIFICATION_RETENTION_DAYS)
         return self.db.query(Notification).filter(
             Notification.user_id == user_id,
-            Notification.is_read.is_(False)
+            Notification.is_read.is_(False),
+            Notification.created_at >= cutoff
         ).count()
 
     def mark_as_read(self, notification_id: int, user_id: int) -> Optional[Notification]:

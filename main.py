@@ -20,6 +20,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 KEEP_ALIVE_INTERVAL_SECONDS = 13 * 60
+NOTIFICATION_SWEEP_INTERVAL_SECONDS = 24 * 60 * 60
 
 
 async def keep_alive(url: str):
@@ -34,6 +35,24 @@ async def keep_alive(url: str):
                 logger.warning("Keep-alive ping to %s failed: %s", url, exc)
 
 
+async def sweep_expired_notifications():
+    """Daily: delete notifications past NOTIFICATION_RETENTION_DAYS for every user."""
+    from database import SessionLocal
+    from features.notifications.service import NotificationService
+
+    while True:
+        db = SessionLocal()
+        try:
+            deleted = NotificationService(db).delete_expired()
+            if deleted:
+                logger.info("Deleted %s expired notifications", deleted)
+        except Exception as exc:
+            logger.warning("Notification sweep failed: %s", exc)
+        finally:
+            db.close()
+        await asyncio.sleep(NOTIFICATION_SWEEP_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Render sets RENDER_EXTERNAL_URL automatically; it must be the public URL
@@ -42,7 +61,9 @@ async def lifespan(app: FastAPI):
     task = None
     if base_url:
         task = asyncio.create_task(keep_alive(f"{base_url.rstrip('/')}/health"))
+    sweep_task = asyncio.create_task(sweep_expired_notifications())
     yield
+    sweep_task.cancel()
     if task:
         task.cancel()
 
