@@ -506,7 +506,7 @@ class GroupBuyService:
                 message=message
             )
 
-    def get_user_groups(self, user_id: int, status: Optional[GroupStatus] = None) -> List[Dict[str, Any]]:
+    def get_user_groups(self, user_id: int, status: Optional[GroupStatus] = None) -> List[GroupBuy]:
         """Get all groups for a user"""
         query = self.db.query(GroupBuy).join(GroupMember).filter(
             GroupMember.user_id == user_id,
@@ -516,27 +516,8 @@ class GroupBuyService:
         if status:
             query = query.filter(GroupBuy.status == status)
         
-        groups = query.all()
-        
-        result = []
-        for group in groups:
-            group_data = {
-                "id": group.id,
-                "public_id": group.public_id,
-                "group_name": group.group_name,
-                "group_description": group.group_description,
-                "group_location": group.group_location,
-                "status": group.status,
-                "progress_percentage": group.progress_percentage,
-                "current_quantity": group.current_quantity,
-                "target_quantity": group.target_quantity,
-                "quantity_unit": group.quantity_unit,
-                "created_at": group.created_at,
-                "is_creator": group.creator_id == user_id
-            }
-            result.append(group_data)
-        
-        return result
+        # The ORM rows carry every field GroupBuyResponse needs
+        return query.all()
 
     def leave_group(self, group_id: int, user_id: int) -> bool:
         """Leave a group"""
