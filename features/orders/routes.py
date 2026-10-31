@@ -14,7 +14,7 @@ from features.notifications.service import NotificationService
 from features.marketplace.models import Order, Product, OrderStatus
 from features.users.models import FarmerProfile
 from features.auth.models import User, UserCategory
-from utils.helpers import split_images
+from utils.product_images import public_images
 from utils.public_id import resolve_id
 from core.dependencies import get_current_active_user
 
@@ -46,7 +46,7 @@ def _farmer_order_response(order: Order, farmer_profile: Optional[FarmerProfile]
         product_name=product.name,
         farm_name=farmer_profile.farm_name if farmer_profile else "Unknown Farm",
         farmer_name=farmer_profile.full_name if farmer_profile else "Farmer",
-        product_images=split_images(product.images),
+        product_images=public_images(product),
         customer_name=f"{consumer_profile.first_name} {consumer_profile.last_name}" if consumer_profile else "Customer",
         # Fall back to the account's phone since orders rarely carry their own contact number
         customer_phone=order.contact_phone or (consumer.phone_number if consumer else None),
@@ -88,7 +88,7 @@ async def get_my_orders(
         farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
         
         # Parse images
-        product_images = split_images(product.images)
+        product_images = public_images(product)
         
         order_response = OrderDetailResponse(
             id=order.id,
@@ -190,7 +190,7 @@ async def get_order_details(
     farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
     
     # Parse images
-    product_images = split_images(product.images)
+    product_images = public_images(product)
     
     # Transform timeline
     timeline_responses = [
@@ -296,7 +296,7 @@ async def confirm_delivery(
     # Get additional details for response
     product = order.product
     farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
-    product_images = split_images(product.images)
+    product_images = public_images(product)
     
     return OrderDetailResponse(
         id=order.id,
@@ -415,7 +415,7 @@ async def update_order_status(
     # Get additional details for response
     product = order.product
     farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
-    product_images = split_images(product.images)
+    product_images = public_images(product)
     
     return OrderDetailResponse(
         id=order.id,

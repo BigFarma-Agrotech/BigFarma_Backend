@@ -66,6 +66,8 @@ def env(monkeypatch):
     from config import settings
     from features.payments import paystack
     monkeypatch.setattr(settings, "PAYSTACK_SECRET_KEY", "sk_test_fake")
+    # Never upload to the real Supabase bucket from tests
+    monkeypatch.setattr(settings, "SUPABASE_S3_ENDPOINT", None)
     async def fake_initialize(email, amount_kobo, reference, callback_url, metadata):
         paystack_state["transactions"][reference] = amount_kobo
         return {"authorization_url": f"https://checkout.paystack.com/{reference}", "reference": reference}

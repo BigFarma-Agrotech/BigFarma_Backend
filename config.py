@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: Optional[str] = None
     TWILIO_PHONE_NUMBER: Optional[str] = None
 
+    # Supabase Storage (S3-compatible) for product images. Without these, images
+    # stay inline in the database (served by the API).
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_S3_ENDPOINT: Optional[str] = None
+    SUPABASE_S3_ACCESS_KEY_ID: Optional[str] = None
+    SUPABASE_S3_SECRET_ACCESS_KEY: Optional[str] = None
+    SUPABASE_S3_REGION: str = "eu-west-1"
+    SUPABASE_STORAGE_BUCKET: str = "product-images"
+
     # Paystack (checkout payments). Use the sk_test_... key until going live.
     PAYSTACK_SECRET_KEY: Optional[str] = None
     PAYSTACK_BASE_URL: str = "https://api.paystack.co"

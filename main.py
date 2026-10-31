@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 import asyncio
 import logging
@@ -94,6 +95,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+# Compress JSON responses (lists of products and orders shrink several-fold)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Include routers
 app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"])

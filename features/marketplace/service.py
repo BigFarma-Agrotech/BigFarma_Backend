@@ -4,6 +4,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
 
 from utils.units import is_count_unit, parse_quantity
+from utils.product_images import resolve_image_refs
+from utils.helpers import split_images
+from services import image_storage
 from features.marketplace.models import Product, Order, Review, AvailabilityStatus, OrderStatus, ProductCategory, OrderPaymentStatus
 from features.marketplace.schemas import ProductCreate, ProductUpdate, OrderCreate, ReviewCreate
 from features.users.models import FarmerProfile
@@ -41,8 +44,8 @@ class MarketplaceService:
         if product_data.price <= 0:
             raise ValueError("Product price must be greater than 0")
         
-        # Convert images list to comma-separated string
-        images_str = ",".join(product_data.images)
+        # Uploads are resized and stored in Supabase Storage; the row keeps the URLs
+        images_str = ",".join(self._store_images(product_data.images, farmer_id))
         
         # Out of stock when the quantity is zero (e.g. "0 kg")
         stock, _ = parse_quantity(product_data.quantity)
@@ -79,10 +82,15 @@ class MarketplaceService:
         
         update_dict = update_data.dict(exclude_unset=True)
         
-        # Handle images conversion
+        # Handle images conversion. Kept images come back as the URLs we sent
+        # out; new ones arrive as data URLs and are resized and stored.
+        removed_images = set()
         if 'images' in update_dict and update_dict['images']:
             if isinstance(update_dict['images'], list):
-                update_dict['images'] = ",".join(update_dict['images'])
+                kept = resolve_image_refs(product, update_dict['images'])
+                new_images = self._store_images(kept, farmer_id)
+                removed_images = set(split_images(product.images)) - set(new_images)
+                update_dict['images'] = ",".join(new_images)
         
         # Update availability if quantity changes
         if 'quantity' in update_dict and update_dict['quantity']:
@@ -109,7 +117,19 @@ class MarketplaceService:
         
         self.db.commit()
         self.db.refresh(product)
+        # Photos the farmer took off the product no longer need storing
+        image_storage.delete_images(list(removed_images))
         return product
+
+    @staticmethod
+    def _store_images(images: list, farmer_id: int) -> list:
+        try:
+            return image_storage.store_images(images, f"products/{farmer_id}")
+        except image_storage.ImageError:
+            raise
+        except Exception as exc:
+            logger.error("Image upload failed: %s", exc)
+            raise ValueError("We couldn't upload your images right now. Please try again.")
 
     def get_farmer_products(self, farmer_id: int) -> List[Product]:
         return self.db.query(Product).filter(Product.farmer_id == farmer_id).order_by(Product.created_at.desc()).all()
@@ -137,8 +157,10 @@ class MarketplaceService:
     def delete_product(self, product_id: int, farmer_id: int) -> bool:
         product = self.db.query(Product).filter(Product.id == product_id, Product.farmer_id == farmer_id).first()
         if product:
+            images = split_images(product.images)
             self.db.delete(product)
             self.db.commit()
+            image_storage.delete_images(images)
             return True
         return False
 

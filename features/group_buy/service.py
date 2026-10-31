@@ -1,5 +1,6 @@
 import logging
 import uuid
+from utils.product_images import public_images
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session, joinedload
@@ -284,7 +285,7 @@ class GroupBuyService:
                 "category": group.product.category,
                 "price": group.product.price,
                 "location": group.product.location,
-                "images": group.product.images,
+                "images": public_images(group.product),
                 "availability": group.product.availability
             },
             "creator": {
@@ -852,7 +853,7 @@ class GroupBuyService:
                     "category": group.product.category,
                     "price": group.product.price,
                     "location": group.product.location,
-                    "images": group.product.images,
+                    "images": public_images(group.product),
                     "availability": group.product.availability
                 },
                 "creator": {

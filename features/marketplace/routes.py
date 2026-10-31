@@ -14,7 +14,8 @@ from features.marketplace.service import MarketplaceService
 from features.auth.models import User
 from features.users.models import FarmerProfile
 from core.dependencies import get_current_active_user
-from utils.helpers import split_images
+from fastapi.responses import Response
+from utils.product_images import decode_image, public_images
 from utils.public_id import resolve_id
 
 router = APIRouter(prefix="/marketplace", tags=["Marketplace"])
@@ -30,21 +31,20 @@ async def get_all_products(
     # Get all products without any filters
     products = service.get_all_products(skip=skip, limit=limit)
     
-    print(f"DEBUG: Found {len(products)} products")
-    
+    # One query for every listed product's farm profile (not one per product)
+    farmer_ids = {product.farmer_id for product in products}
+    profiles = {
+        profile.user_id: profile
+        for profile in db.query(FarmerProfile).filter(FarmerProfile.user_id.in_(farmer_ids))
+    } if farmer_ids else {}
+
     # Convert to public response format
     public_products = []
     for product in products:
-        # Get farmer profile
-        farmer_profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == product.farmer_id).first()
+        farmer_profile = profiles.get(product.farmer_id)
         
         # Parse images
-        images = []
-        if product.images:
-            if isinstance(product.images, str):
-                images = split_images(product.images)
-            elif isinstance(product.images, list):
-                images = product.images
+        images = public_images(product)
         
         # Calculate discounted price
         discounted_price = product.price * (1 - (product.discount_percentage or 0) / 100)
@@ -117,12 +117,7 @@ async def get_product_detail(product_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Farmer profile not found")
     
     # Convert images
-    images = []
-    if product.images:
-        if isinstance(product.images, str):
-            images = split_images(product.images)
-        elif isinstance(product.images, list):
-            images = product.images
+    images = public_images(product)
     
     # Calculate discounted price
     discounted_price = product.price * (1 - (product.discount_percentage or 0) / 100)
@@ -159,6 +154,18 @@ async def get_product_detail(product_id: str, db: Session = Depends(get_db)):
         discounted_price=discounted_price
     )
 
+@router.get("/products/{product_id}/images/{index}", include_in_schema=False)
+async def get_product_image(product_id: str, index: int, db: Session = Depends(get_db)):
+    """An uploaded product image. URLs carry a version (?v=...) that changes with
+    the image, so browsers may cache them for a year."""
+    product = db.query(Product).filter(Product.public_id == product_id).first()
+    image = decode_image(product, index) if product else None
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+    content, media_type = image
+    return Response(content=content, media_type=media_type,
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
 # Farmer product management
 @router.post("/farmers/products", response_model=ProductResponse)
 async def create_product(
@@ -174,12 +181,7 @@ async def create_product(
         product = service.create_product(current_user.id, product_data)
         
         # Convert images back to list for response
-        images = []
-        if product.images:
-            if isinstance(product.images, str):
-                images = split_images(product.images)
-            elif isinstance(product.images, list):
-                images = product.images
+        images = public_images(product)
         
         return ProductResponse(
             id=product.id,
@@ -235,12 +237,7 @@ async def get_my_products(
 
     response_products = []
     for product in products:
-        images = []
-        if product.images:
-            if isinstance(product.images, str):
-                images = split_images(product.images)
-            elif isinstance(product.images, list):
-                images = product.images
+        images = public_images(product)
         
         response_products.append(FarmerProductResponse(
             id=product.id,
@@ -289,12 +286,7 @@ async def update_product(
         raise HTTPException(status_code=404, detail="Product not found")
     
     # Convert images back to list for response
-    images = []
-    if product.images:
-        if isinstance(product.images, str):
-            images = split_images(product.images)
-        elif isinstance(product.images, list):
-            images = product.images
+    images = public_images(product)
     
     return ProductResponse(
         id=product.id,
