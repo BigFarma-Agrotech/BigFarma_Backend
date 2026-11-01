@@ -1,6 +1,7 @@
-"""Thin client for the two Paystack calls checkout needs, plus webhook signature checks."""
+"""Thin client for the Paystack calls checkout and farmer payouts need, plus webhook signature checks."""
 import hashlib
 import hmac
+from urllib.parse import urlencode
 import logging
 from typing import Any, Dict, Optional
 
@@ -72,6 +73,44 @@ async def verify_transaction(reference: str) -> Dict[str, Any]:
 async def refund_transaction(reference: str) -> Dict[str, Any]:
     """Refund a successful transaction in full (Paystack sends it back to the payer's card/bank)."""
     return await _request("POST", "/refund", {"transaction": reference})
+
+
+# ---------------------------------------------------------------------------
+# Payouts: banks, account lookup, transfer recipients and transfers
+# ---------------------------------------------------------------------------
+
+async def list_banks() -> list:
+    """Nigerian banks that can receive transfers: [{name, code, ...}]."""
+    return await _request("GET", "/bank?country=nigeria&currency=NGN&perPage=200")
+
+
+async def resolve_account(account_number: str, bank_code: str) -> Dict[str, Any]:
+    """The name on a bank account: {account_number, account_name}. Errors if it doesn't exist."""
+    query = urlencode({"account_number": account_number, "bank_code": bank_code})
+    return await _request("GET", f"/bank/resolve?{query}")
+
+
+async def create_transfer_recipient(account_name: str, account_number: str, bank_code: str) -> Dict[str, Any]:
+    """Register a bank account to send transfers to; returns {recipient_code, ...}."""
+    return await _request("POST", "/transferrecipient", {
+        "type": "nuban",
+        "name": account_name,
+        "account_number": account_number,
+        "bank_code": bank_code,
+        "currency": "NGN",
+    })
+
+
+async def initiate_transfer(amount_kobo: int, recipient_code: str, reference: str, reason: str) -> Dict[str, Any]:
+    """Send money from the Paystack balance; returns {status: success|pending|otp|..., transfer_code, ...}."""
+    return await _request("POST", "/transfer", {
+        "source": "balance",
+        "amount": amount_kobo,
+        "recipient": recipient_code,
+        "reference": reference,
+        "reason": reason,
+        "currency": "NGN",
+    })
 
 
 def valid_webhook_signature(raw_body: bytes, signature: Optional[str]) -> bool:

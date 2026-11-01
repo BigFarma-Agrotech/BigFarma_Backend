@@ -67,7 +67,11 @@ async def paystack_webhook(request: Request, background_tasks: BackgroundTasks, 
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid payload")
 
     data = event.get("data") or {}
-    if event.get("event") == "charge.success" and data.get("reference"):
+    if str(event.get("event") or "").startswith("transfer."):
+        # Farmer withdrawals: settle or refund the wallet
+        from features.wallet.services import WalletService, WithdrawalService
+        WithdrawalService(db, WalletService(db)).apply_transfer_event(event["event"], data)
+    elif event.get("event") == "charge.success" and data.get("reference"):
         service = PaymentService(db)
         payment = service.get_payment(data["reference"])
         if payment:

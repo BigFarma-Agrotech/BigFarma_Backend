@@ -6,6 +6,8 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 os.environ["DEBUG"] = "false"
 os.environ.setdefault("DATABASE_URL", "sqlite:///test.db")
 
+import asyncio
+
 import pytest
 from sqlalchemy import create_engine
 import features.users.models  # noqa: F401
@@ -139,7 +141,14 @@ def test_transaction_history_and_dashboard(db_session):
     assert len(dashboard["recent_transactions"]) == 3
 
 
-def test_withdrawal_and_bank_account_workflow(db_session):
+def test_withdrawal_and_bank_account_workflow(db_session, monkeypatch):
+    from features.payments import paystack
+    sent = []
+    async def fake_transfer(amount_kobo, recipient_code, reference, reason):
+        sent.append((amount_kobo, recipient_code))
+        return {"status": "success", "transfer_code": "TRF_1"}
+    monkeypatch.setattr(paystack, "initiate_transfer", fake_transfer)
+
     farmer = create_farmer(db_session, email="farmer3@example.com")
     wallet, wallet_service = seed_wallet_with_balance(db_session, farmer.id, amount=1_500.0)
     bank_service = BankVerificationService(db_session)
@@ -175,12 +184,14 @@ def test_withdrawal_and_bank_account_workflow(db_session):
 
     withdrawal_service = WithdrawalService(db_session, wallet_service)
     request = WithdrawalRequestCreate(amount=600.0, bank_account_id=second_account.id, idempotency_key="withdraw-1")
-    withdrawal = withdrawal_service.create_withdrawal_request(farmer.id, request)
+    withdrawal = asyncio.run(withdrawal_service.create_withdrawal_request(farmer.id, request))
 
     assert withdrawal.status == WithdrawalStatus.COMPLETED
     assert withdrawal.fee > 0
     db_session.refresh(wallet)
     assert wallet.balance == pytest.approx(900.0)
 
-    duplicate = withdrawal_service.create_withdrawal_request(farmer.id, request)
+    duplicate = asyncio.run(withdrawal_service.create_withdrawal_request(farmer.id, request))
     assert duplicate.id == withdrawal.id
+    # Sent to the primary account's recipient, less the 1.5% fee (600 - 9 = 591)
+    assert sent == [(59100, "RCP_0987654321")]

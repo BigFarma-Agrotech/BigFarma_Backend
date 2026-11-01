@@ -26,8 +26,10 @@ from .exceptions import (
 from .utils import (
     generate_transaction_reference, calculate_withdrawal_fee,
     validate_withdrawal_amount, format_currency, round_down_to_kobo,
-    calculate_wallet_stats
+    calculate_wallet_stats, mask_account_number
 )
+from .config import wallet_config
+from features.payments import paystack
 
 logger = logging.getLogger(__name__)
 
@@ -346,78 +348,74 @@ class WalletService:
         }
 
 
+# Paystack's transfer statuses that mean "accepted, final result comes by webhook"
+TRANSFER_IN_FLIGHT = {"pending", "received", "processing", "queued"}
+OPEN_WITHDRAWAL_STATUSES = [WithdrawalStatus.PENDING, WithdrawalStatus.PROCESSING]
+
+GATEWAY_UNAVAILABLE = "Withdrawals are temporarily unavailable. Please try again later."
+
+
+def _to_kobo(amount: float) -> int:
+    return int(round(amount * 100))
+
+
 class WithdrawalService:
-    """Service for withdrawal operations"""
-    
+    """Withdrawals: hold the money in the wallet, send it with a Paystack transfer,
+    and settle (or refund) when Paystack reports the result."""
+
     def __init__(self, db: Session, wallet_service: WalletService):
         self.db = db
         self.wallet_service = wallet_service
-    
-    def create_withdrawal_request(
+
+    async def create_withdrawal_request(
         self,
         farmer_id: int,
         request_data: WithdrawalRequestCreate
     ) -> WithdrawalRequest:
-        """
-        Create a new withdrawal request
-        
-        Args:
-            farmer_id: ID of the farmer
-            request_data: Withdrawal request data
-        
-        Returns:
-            Created withdrawal request
-        
-        Raises:
-            Various exceptions for validation failures
-        """
-        # Get wallet
+        """Debit the wallet and start a transfer to one of the farmer's bank accounts."""
         wallet = self.wallet_service.get_wallet_by_farmer_id(farmer_id)
-        
-        # Check for pending withdrawals
+
+        # A retried request (same key) gets the original withdrawal back
+        if request_data.idempotency_key:
+            existing = self.db.query(WithdrawalRequest).filter(
+                WithdrawalRequest.idempotency_key == request_data.idempotency_key,
+                WithdrawalRequest.wallet_id == wallet.id,
+            ).first()
+            if existing:
+                return existing
+
         pending_count = self.db.query(WithdrawalRequest).filter(
             WithdrawalRequest.wallet_id == wallet.id,
-            WithdrawalRequest.status.in_([WithdrawalStatus.PENDING, WithdrawalStatus.PROCESSING])
+            WithdrawalRequest.status.in_(OPEN_WITHDRAWAL_STATUSES)
         ).count()
-        
         if pending_count > 0:
             raise PendingWithdrawalError()
-        
-        # Validate withdrawal amount
+
+        if request_data.amount > wallet.ledger_balance:
+            raise InsufficientFundsError(wallet.ledger_balance, request_data.amount)
         is_valid, error_msg = validate_withdrawal_amount(
-            request_data.amount,
-            wallet.ledger_balance
+            request_data.amount, wallet.ledger_balance, wallet_config.MINIMUM_WITHDRAWAL_AMOUNT
         )
         if not is_valid:
             raise WithdrawalLimitError(error_msg)
-        
-        # Get bank account
+
         bank_account = self.db.query(BankAccount).filter(
             BankAccount.id == request_data.bank_account_id,
             BankAccount.wallet_id == wallet.id,
             BankAccount.is_active == True
         ).first()
-        
         if not bank_account:
             raise BankAccountNotFoundError(str(request_data.bank_account_id))
-        
-        if bank_account.status != BankAccountStatus.VERIFIED:
-            raise BankAccountVerificationError("Bank account must be verified before withdrawal")
-        
-        # Check idempotency
-        if request_data.idempotency_key:
-            existing = self.db.query(WithdrawalRequest).filter(
-                WithdrawalRequest.idempotency_key == request_data.idempotency_key
-            ).first()
-            
-            if existing:
-                return existing  # Return existing request instead of creating duplicate
-        
-        # Calculate fee
-        fee = calculate_withdrawal_fee(request_data.amount)
+        if bank_account.status != BankAccountStatus.VERIFIED or not bank_account.recipient_code:
+            raise BankAccountVerificationError(
+                "This bank account isn't ready for withdrawals. Remove it and add it again."
+            )
+
+        fee = round_down_to_kobo(calculate_withdrawal_fee(
+            request_data.amount, wallet_config.WITHDRAWAL_FEE_PERCENTAGE, wallet_config.MAXIMUM_WITHDRAWAL_FEE
+        ))
         final_amount = round_down_to_kobo(request_data.amount - fee)
-        
-        # Create withdrawal request
+
         withdrawal = WithdrawalRequest(
             wallet_id=wallet.id,
             bank_account_id=bank_account.id,
@@ -428,284 +426,322 @@ class WithdrawalService:
             status=WithdrawalStatus.PENDING,
             idempotency_key=request_data.idempotency_key
         )
-        
         self.db.add(withdrawal)
         self.db.commit()
         self.db.refresh(withdrawal)
-        
-        logger.info(f"Created withdrawal request {withdrawal.reference} for {format_currency(request_data.amount)}")
-        
-        # Process withdrawal asynchronously (would typically use Celery or similar)
-        # For now, we'll just mark it as processing
-        self._process_withdrawal(withdrawal)
-        
-        return withdrawal
-    
-    def _process_withdrawal(self, withdrawal: WithdrawalRequest) -> None:
-        """
-        Process a withdrawal request (internal method)
-        
-        Args:
-            withdrawal: Withdrawal request to process
-        """
+
+        # Hold the money first so it can't be withdrawn twice while the transfer runs
         try:
-            # Update status to processing
-            withdrawal.status = WithdrawalStatus.PROCESSING
-            withdrawal.processed_at = datetime.now(timezone.utc)
-            self.db.commit()
-            
-            # Here you would integrate with payment gateway
-            # For now, we'll simulate success
-            
-            # Debit wallet
-            transaction = self.wallet_service.debit_wallet(
-                wallet_id=withdrawal.wallet_id,
+            self.wallet_service.debit_wallet(
+                wallet_id=wallet.id,
                 amount=withdrawal.amount,
                 category=TransactionCategory.WITHDRAWAL,
-                description=f"Withdrawal to {withdrawal.bank_account.bank_name} - {withdrawal.bank_account.account_number[-4:]}",
-                withdrawal_request_id=withdrawal.id
+                description=f"Withdrawal to {bank_account.bank_name} - {mask_account_number(bank_account.account_number)}",
+                withdrawal_request_id=withdrawal.id,
             )
-            
-            # Update withdrawal status
-            withdrawal.status = WithdrawalStatus.COMPLETED
-            withdrawal.completed_at = datetime.now(timezone.utc)
+        except InsufficientFundsError:
+            self._mark_failed(withdrawal, "Insufficient funds")
             self.db.commit()
-            
-            logger.info(f"Completed withdrawal {withdrawal.reference}")
-            
-        except Exception as e:
-            logger.error(f"Failed to process withdrawal {withdrawal.reference}: {str(e)}")
-            withdrawal.status = WithdrawalStatus.FAILED
-            withdrawal.failed_at = datetime.now(timezone.utc)
-            withdrawal.failure_reason = str(e)
-            self.db.commit()
-    
+            raise
+        self._set_transaction_status(withdrawal, "pending")
+        self.db.commit()
+
+        logger.info(f"Created withdrawal request {withdrawal.reference} for {format_currency(withdrawal.amount)}")
+        await self._send_transfer(withdrawal)
+        self.db.refresh(withdrawal)
+        return withdrawal
+
+    async def _send_transfer(self, withdrawal: WithdrawalRequest) -> None:
+        """Ask Paystack to pay out; failures put the money back in the wallet."""
+        bank_account = withdrawal.bank_account
+        withdrawal.status = WithdrawalStatus.PROCESSING
+        withdrawal.processed_at = datetime.now(timezone.utc)
+        self.db.commit()
+
+        try:
+            transfer = await paystack.initiate_transfer(
+                amount_kobo=_to_kobo(withdrawal.final_amount),
+                recipient_code=bank_account.recipient_code,
+                reference=withdrawal.reference,
+                reason="BigFarma wallet withdrawal",
+            )
+        except paystack.PaystackError as exc:
+            logger.error(f"Transfer for withdrawal {withdrawal.reference} failed to start: {exc.message}")
+            self._fail_and_refund(withdrawal, exc.message)
+            raise PaymentGatewayError(
+                GATEWAY_UNAVAILABLE if exc.status_code == 503
+                else "We couldn't send your withdrawal. Your money is back in your wallet; please try again."
+            )
+
+        withdrawal.gateway_reference = transfer.get("transfer_code")
+        withdrawal.gateway_response = json.dumps(transfer, default=str)[:4000]
+        status = str(transfer.get("status") or "").lower()
+
+        if status == "success":
+            self._mark_completed(withdrawal)
+        elif status in TRANSFER_IN_FLIGHT:
+            pass  # stays PROCESSING until the transfer.success / transfer.failed webhook
+        else:
+            # "otp" means OTP for transfers is still switched on in the Paystack dashboard
+            logger.error(f"Transfer for withdrawal {withdrawal.reference} came back '{status}'")
+            self._fail_and_refund(withdrawal, f"Transfer {status or 'rejected'}")
+            raise PaymentGatewayError(GATEWAY_UNAVAILABLE)
+        self.db.commit()
+
+    def apply_transfer_event(self, event: str, data: Dict[str, Any]) -> Optional[WithdrawalRequest]:
+        """Settle a withdrawal from a Paystack transfer.* webhook. Safe to receive twice."""
+        reference = data.get("reference")
+        withdrawal = self.db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.reference == reference
+        ).first() if reference else None
+        if not withdrawal:
+            logger.warning(f"Transfer webhook for unknown reference {reference}")
+            return None
+
+        withdrawal.gateway_response = json.dumps(data, default=str)[:4000]
+        if event == "transfer.success" and withdrawal.status in OPEN_WITHDRAWAL_STATUSES:
+            self._mark_completed(withdrawal)
+        elif event == "transfer.failed" and withdrawal.status in OPEN_WITHDRAWAL_STATUSES:
+            self._fail_and_refund(withdrawal, data.get("reason") or "Transfer failed")
+        elif event == "transfer.reversed" and withdrawal.status in OPEN_WITHDRAWAL_STATUSES + [WithdrawalStatus.COMPLETED]:
+            self._fail_and_refund(withdrawal, "Transfer reversed by the bank")
+        self.db.commit()
+        self.db.refresh(withdrawal)
+        return withdrawal
+
+    def _set_transaction_status(self, withdrawal: WithdrawalRequest, status: str) -> None:
+        self.db.query(Transaction).filter(
+            Transaction.withdrawal_request_id == withdrawal.id,
+            Transaction.type == TransactionType.DEBIT,
+        ).update({"status": status})
+
+    def _mark_completed(self, withdrawal: WithdrawalRequest) -> None:
+        withdrawal.status = WithdrawalStatus.COMPLETED
+        withdrawal.completed_at = datetime.now(timezone.utc)
+        self._set_transaction_status(withdrawal, "completed")
+        logger.info(f"Completed withdrawal {withdrawal.reference}")
+
+    def _mark_failed(self, withdrawal: WithdrawalRequest, reason: str,
+                     status: WithdrawalStatus = WithdrawalStatus.FAILED) -> None:
+        withdrawal.status = status
+        withdrawal.failed_at = datetime.now(timezone.utc)
+        withdrawal.failure_reason = reason
+
+    def _fail_and_refund(self, withdrawal: WithdrawalRequest, reason: str,
+                         status: WithdrawalStatus = WithdrawalStatus.FAILED) -> None:
+        """Mark the withdrawal failed and credit the held amount back to the wallet."""
+        self._mark_failed(withdrawal, reason, status)
+        self._set_transaction_status(withdrawal, "reversed")
+        # credit_wallet commits, which also saves the status change above
+        self.wallet_service.credit_wallet(
+            wallet_id=withdrawal.wallet_id,
+            amount=withdrawal.amount,
+            category=TransactionCategory.REFUND,
+            description=f"Withdrawal {withdrawal.reference} returned to wallet",
+            metadata={"withdrawal_reference": withdrawal.reference, "reason": reason},
+        )
+        logger.info(f"Refunded withdrawal {withdrawal.reference}: {reason}")
+
     def get_withdrawal_status(self, withdrawal_id: UUID) -> WithdrawalRequest:
-        """
-        Get withdrawal request status
-        
-        Args:
-            withdrawal_id: UUID of the withdrawal request
-        
-        Returns:
-            Withdrawal request object
-        """
         withdrawal = self.db.query(WithdrawalRequest).filter(
             WithdrawalRequest.id == withdrawal_id
         ).first()
-        
         if not withdrawal:
             raise ValueError(f"Withdrawal request {withdrawal_id} not found")
-        
         return withdrawal
-    
+
     def cancel_withdrawal(self, withdrawal_id: UUID, farmer_id: int) -> WithdrawalRequest:
-        """
-        Cancel a pending withdrawal request
-        
-        Args:
-            withdrawal_id: UUID of the withdrawal request
-            farmer_id: ID of the farmer (for authorization)
-        
-        Returns:
-            Updated withdrawal request
-        """
-        # Get wallet first to verify ownership
+        """Cancel a withdrawal that hasn't been sent to the bank yet; the money goes back to the wallet."""
         wallet = self.wallet_service.get_wallet_by_farmer_id(farmer_id)
-        
         withdrawal = self.db.query(WithdrawalRequest).filter(
             WithdrawalRequest.id == withdrawal_id,
             WithdrawalRequest.wallet_id == wallet.id
         ).first()
-        
         if not withdrawal:
             raise ValueError(f"Withdrawal request {withdrawal_id} not found")
-        
-        if withdrawal.status not in [WithdrawalStatus.PENDING]:
-            raise ValueError(f"Cannot cancel withdrawal with status {withdrawal.status}")
-        
-        withdrawal.status = WithdrawalStatus.CANCELLED
-        withdrawal.failed_at = datetime.now(timezone.utc)
-        withdrawal.failure_reason = "Cancelled by user"
-        
-        self.db.commit()
+        if withdrawal.status != WithdrawalStatus.PENDING:
+            raise ValueError("This withdrawal has already been sent to your bank and can't be cancelled")
+
+        held = self.db.query(Transaction).filter(Transaction.withdrawal_request_id == withdrawal.id).count() > 0
+        if held:
+            self._fail_and_refund(withdrawal, "Cancelled by user", WithdrawalStatus.CANCELLED)
+        else:
+            self._mark_failed(withdrawal, "Cancelled by user", WithdrawalStatus.CANCELLED)
+            self.db.commit()
         self.db.refresh(withdrawal)
-        
         logger.info(f"Cancelled withdrawal {withdrawal.reference}")
         return withdrawal
 
 
+# Paystack's bank list changes rarely; keep it for a day
+_BANKS_CACHE: Dict[str, Any] = {"banks": None, "fetched_at": None}
+BANKS_CACHE_TTL = timedelta(hours=24)
+
+
 class BankVerificationService:
-    """Service for bank account verification"""
-    
+    """Bank accounts farmers withdraw to, checked and registered with Paystack."""
+
     def __init__(self, db: Session):
         self.db = db
-    
-    async def verify_bank_account(
-        self,
-        account_number: str,
-        bank_code: str
-    ) -> BankAccountVerifyResponse:
-        """
-        Verify bank account details with payment gateway
-        
-        Args:
-            account_number: Bank account number
-            bank_code: Bank code
-        
-        Returns:
-            Verification response
-        """
-        # This would integrate with actual payment gateway
-        # For now, we'll simulate the response
-        
-        # Simulate API delay
-        import asyncio
-        await asyncio.sleep(1)
-        
-        # Mock response - in production, this would call actual API
-        mock_banks = {
-            "058": "Guaranty Trust Bank",
-            "033": "United Bank for Africa",
-            "011": "First Bank of Nigeria",
-            "214": "First City Monument Bank",
-            "057": "Zenith Bank",
-            "035": "Wema Bank",
-            "044": "Access Bank"
-        }
-        
-        bank_name = mock_banks.get(bank_code, "Unknown Bank")
-        
-        # Simulate verification success (in production, would check actual response)
+
+    async def list_banks(self) -> List[Dict[str, str]]:
+        """Nigerian banks that accept transfers: [{name, code}] sorted by name."""
+        fetched_at = _BANKS_CACHE["fetched_at"]
+        if _BANKS_CACHE["banks"] and fetched_at and datetime.now(timezone.utc) - fetched_at < BANKS_CACHE_TTL:
+            return _BANKS_CACHE["banks"]
+        try:
+            raw = await paystack.list_banks()
+        except paystack.PaystackError as exc:
+            if _BANKS_CACHE["banks"]:
+                return _BANKS_CACHE["banks"]  # stale beats nothing
+            raise PaymentGatewayError(GATEWAY_UNAVAILABLE if exc.status_code == 503 else exc.message)
+
+        banks: Dict[str, Dict[str, str]] = {}
+        for bank in raw if isinstance(raw, list) else []:
+            code = str(bank.get("code") or "").strip()
+            if not code or not bank.get("active", True) or bank.get("is_deleted"):
+                continue
+            if bank.get("type") not in (None, "nuban"):
+                continue
+            banks.setdefault(code, {"name": str(bank.get("name") or code).strip(), "code": code})
+        result = sorted(banks.values(), key=lambda b: b["name"].lower())
+        if result:
+            _BANKS_CACHE.update(banks=result, fetched_at=datetime.now(timezone.utc))
+        return result
+
+    async def verify_bank_account(self, account_number: str, bank_code: str) -> BankAccountVerifyResponse:
+        """Look up the name on the account with Paystack."""
+        banks = {bank["code"]: bank["name"] for bank in await self.list_banks()}
+        if bank_code not in banks:
+            raise BankAccountVerificationError("Choose your bank from the list.")
+        not_found = f"We couldn't find account {account_number} at {banks[bank_code]}. Check the number and bank."
+        try:
+            resolved = await paystack.resolve_account(account_number, bank_code)
+        except paystack.PaystackError as exc:
+            if exc.status_code == 503:
+                raise PaymentGatewayError(GATEWAY_UNAVAILABLE)
+            raise BankAccountVerificationError(not_found)
+        account_name = str(resolved.get("account_name") or "").strip()
+        if not account_name:
+            raise BankAccountVerificationError(not_found)
         return BankAccountVerifyResponse(
             account_number=account_number,
-            account_name="JOHN DOE",  # This would come from actual API
+            account_name=account_name,
             bank_code=bank_code,
-            bank_name=bank_name,
+            bank_name=banks[bank_code],
             is_valid=True,
-            recipient_code=f"RCP_{account_number}_{bank_code}"
         )
-    
+
+    async def register_recipient(self, verification: BankAccountVerifyResponse) -> BankAccountVerifyResponse:
+        """Create the Paystack transfer recipient that withdrawals are sent to."""
+        try:
+            recipient = await paystack.create_transfer_recipient(
+                verification.account_name, verification.account_number, verification.bank_code
+            )
+        except paystack.PaystackError as exc:
+            raise PaymentGatewayError(GATEWAY_UNAVAILABLE if exc.status_code == 503 else exc.message)
+        if not recipient.get("recipient_code"):
+            raise PaymentGatewayError(GATEWAY_UNAVAILABLE)
+        return verification.model_copy(update={"recipient_code": recipient["recipient_code"]})
+
     def add_bank_account(
         self,
         farmer_id: int,
         account_data: BankAccountCreateRequest,
         verification_response: BankAccountVerifyResponse
     ) -> BankAccount:
-        """
-        Add a verified bank account to farmer's wallet
-        
-        Args:
-            farmer_id: ID of the farmer
-            account_data: Bank account data
-            verification_response: Verification response from gateway
-        
-        Returns:
-            Created bank account
-        """
-        # Get wallet
-        wallet_service = WalletService(self.db)
-        wallet = wallet_service.get_wallet_by_farmer_id(farmer_id)
-        
-        # Check for duplicate
+        """Save a verified bank account; the first one becomes the primary account."""
+        wallet = WalletService(self.db).get_wallet_by_farmer_id(farmer_id)
+
         existing = self.db.query(BankAccount).filter(
             BankAccount.wallet_id == wallet.id,
             BankAccount.account_number == account_data.account_number,
             BankAccount.bank_code == account_data.bank_code
         ).first()
-        
-        if existing:
-            if existing.is_active:
-                raise DuplicateBankAccountError(
-                    account_data.account_number,
-                    verification_response.bank_name
-                )
-            else:
-                # Reactivate existing account
-                existing.is_active = True
-                existing.status = BankAccountStatus.VERIFIED
-                existing.verified_at = datetime.now(timezone.utc)
-                self.db.commit()
-                return existing
-        
-        # Create new bank account
-        bank_account = BankAccount(
-            wallet_id=wallet.id,
-            account_number=verification_response.account_number,
-            account_name=verification_response.account_name,
-            bank_code=verification_response.bank_code,
-            bank_name=verification_response.bank_name,
-            status=BankAccountStatus.VERIFIED,
-            verified_at=datetime.now(timezone.utc),
-            verification_reference=generate_transaction_reference("VRF"),
-            recipient_code=verification_response.recipient_code
-        )
-        
-        # If this is the first account, make it primary
-        if self.db.query(BankAccount).filter(
+        if existing and existing.is_active:
+            raise DuplicateBankAccountError(account_data.account_number, verification_response.bank_name)
+
+        active_count = self.db.query(BankAccount).filter(
             BankAccount.wallet_id == wallet.id,
             BankAccount.is_active == True
-        ).count() == 0:
-            bank_account.is_primary = True
-        
-        self.db.add(bank_account)
+        ).count()
+        if active_count >= wallet_config.MAX_BANK_ACCOUNTS_PER_USER:
+            raise BankAccountVerificationError(
+                f"You can link up to {wallet_config.MAX_BANK_ACCOUNTS_PER_USER} bank accounts. Remove one first."
+            )
+
+        if existing:
+            # Re-adding a removed account: refresh it with the latest details
+            bank_account = existing
+            bank_account.is_active = True
+            bank_account.is_primary = False
+        else:
+            bank_account = BankAccount(wallet_id=wallet.id)
+            self.db.add(bank_account)
+        bank_account.account_number = verification_response.account_number
+        bank_account.account_name = verification_response.account_name
+        bank_account.bank_code = verification_response.bank_code
+        bank_account.bank_name = verification_response.bank_name
+        bank_account.status = BankAccountStatus.VERIFIED
+        bank_account.verified_at = datetime.now(timezone.utc)
+        bank_account.verification_reference = generate_transaction_reference("VRF")
+        bank_account.recipient_code = verification_response.recipient_code
+        bank_account.is_primary = active_count == 0
+
         self.db.commit()
         self.db.refresh(bank_account)
-        
         logger.info(f"Added bank account for farmer {farmer_id}")
         return bank_account
-    
+
     def get_bank_accounts(self, farmer_id: int) -> List[BankAccount]:
-        """
-        Get all bank accounts for a farmer
-        
-        Args:
-            farmer_id: ID of the farmer
-        
-        Returns:
-            List of bank accounts
-        """
-        wallet_service = WalletService(self.db)
-        wallet = wallet_service.get_wallet_by_farmer_id(farmer_id)
-        
+        """The farmer's linked accounts, primary first."""
+        wallet = WalletService(self.db).get_wallet_by_farmer_id(farmer_id)
         return self.db.query(BankAccount).filter(
             BankAccount.wallet_id == wallet.id,
             BankAccount.is_active == True
-        ).all()
-    
-    def set_primary_bank_account(self, farmer_id: int, account_id: UUID) -> BankAccount:
-        """
-        Set a bank account as primary
-        
-        Args:
-            farmer_id: ID of the farmer
-            account_id: UUID of the bank account
-        
-        Returns:
-            Updated bank account
-        """
-        wallet_service = WalletService(self.db)
-        wallet = wallet_service.get_wallet_by_farmer_id(farmer_id)
-        
-        # Get the account
+        ).order_by(desc(BankAccount.is_primary), BankAccount.created_at).all()
+
+    def _get_active_account(self, farmer_id: int, account_id: UUID) -> tuple:
+        wallet = WalletService(self.db).get_wallet_by_farmer_id(farmer_id)
         account = self.db.query(BankAccount).filter(
             BankAccount.id == account_id,
             BankAccount.wallet_id == wallet.id,
             BankAccount.is_active == True
         ).first()
-        
         if not account:
             raise BankAccountNotFoundError(str(account_id))
-        
-        # Remove primary flag from all other accounts
+        return wallet, account
+
+    def set_primary_bank_account(self, farmer_id: int, account_id: UUID) -> BankAccount:
+        wallet, account = self._get_active_account(farmer_id, account_id)
         self.db.query(BankAccount).filter(
             BankAccount.wallet_id == wallet.id,
             BankAccount.id != account_id
         ).update({"is_primary": False})
-        
-        # Set this account as primary
         account.is_primary = True
         self.db.commit()
         self.db.refresh(account)
-        
         return account
+
+    def remove_bank_account(self, farmer_id: int, account_id: UUID) -> None:
+        """Unlink an account (kept for withdrawal history). Another account becomes primary."""
+        wallet, account = self._get_active_account(farmer_id, account_id)
+        in_use = self.db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.bank_account_id == account.id,
+            WithdrawalRequest.status.in_(OPEN_WITHDRAWAL_STATUSES)
+        ).count()
+        if in_use:
+            raise BankAccountVerificationError("A withdrawal to this account is still in progress.")
+
+        was_primary = account.is_primary
+        account.is_active = False
+        account.is_primary = False
+        if was_primary:
+            replacement = self.db.query(BankAccount).filter(
+                BankAccount.wallet_id == wallet.id,
+                BankAccount.is_active == True,
+                BankAccount.id != account.id
+            ).order_by(BankAccount.created_at).first()
+            if replacement:
+                replacement.is_primary = True
+        self.db.commit()

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from features.auth.models import User
-from core.dependencies import get_current_user
+from core.dependencies import get_current_active_user
 from .services import WalletService, WithdrawalService, BankVerificationService
 
 
@@ -55,7 +55,7 @@ def get_bank_verification_service(db: Session = Depends(get_db)) -> BankVerifica
 
 
 def get_current_farmer_user(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_active_user)
 ) -> User:
     """
     Get current user and verify they are a farmer
@@ -71,9 +71,8 @@ def get_current_farmer_user(
     """
     from fastapi import HTTPException, status
     
-    # Assuming there's a role or user_type field to check
-    # Adjust based on your actual User model
-    if hasattr(current_user, 'user_type') and current_user.user_type != 'farmer':
+    category = getattr(current_user.category, "value", current_user.category)
+    if category != "farmer":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only farmers can access wallet features"
