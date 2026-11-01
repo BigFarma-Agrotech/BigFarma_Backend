@@ -263,6 +263,7 @@ class ProductSearchResponse(BaseModel):
     total_count: int
     page: int
     page_size: int
+    total_pages: int = 1
     has_next: bool
     has_previous: bool
 

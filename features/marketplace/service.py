@@ -1,7 +1,7 @@
 import logging
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func
+from sqlalchemy import and_, or_, func, false
 
 from utils.units import is_count_unit, parse_quantity
 from utils.product_images import resolve_image_refs
@@ -12,6 +12,10 @@ from features.marketplace.schemas import ProductCreate, ProductUpdate, OrderCrea
 from features.users.models import FarmerProfile
 
 logger = logging.getLogger(__name__)
+
+ANIMAL_CATEGORIES = {ProductCategory.LIVESTOCK, ProductCategory.POULTRY, ProductCategory.FISH, ProductCategory.DAIRY_EGGS}
+CATEGORY_VALUES = {c.value for c in ProductCategory}
+AVAILABILITY_VALUES = {a.value for a in AvailabilityStatus}
 
 class MarketplaceService:
     def __init__(self, db: Session):
@@ -150,6 +154,85 @@ class MarketplaceService:
         
         return query.offset(skip).limit(limit).all()
     
+    def list_marketplace_products(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        q: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        availability: Optional[List[str]] = None,
+        locations: Optional[List[str]] = None,
+        max_price: Optional[float] = None,
+    ) -> tuple[List[Product], int]:
+        """One page of listed products matching the marketplace filters, plus the total match count."""
+        query = self.db.query(Product).filter(Product.is_listed == True)  # noqa: E712
+
+        term = (q or "").strip().lower()
+        if term:
+            like = f"%{term}%"
+            # Category is an enum, so match its values in Python ("roots tubers" finds roots_tubers)
+            matching_categories = [c for c in ProductCategory if term in c.value.replace("_", " ") or term in c.value]
+            farm_matches = self.db.query(FarmerProfile.user_id).filter(
+                or_(func.lower(FarmerProfile.full_name).like(like), func.lower(FarmerProfile.farm_name).like(like))
+            )
+            query = query.filter(or_(
+                func.lower(Product.name).like(like),
+                func.lower(Product.description).like(like),
+                func.lower(Product.location).like(like),
+                Product.category.in_(matching_categories) if matching_categories else false(),
+                Product.farmer_id.in_(farm_matches),
+            ))
+
+        if categories:
+            wanted = set()
+            for raw in categories:
+                key = raw.strip().lower()
+                if key == "protein":  # the marketplace's "Protein" tile
+                    wanted.update(ANIMAL_CATEGORIES)
+                elif key in CATEGORY_VALUES:
+                    wanted.add(ProductCategory(key))
+            # Older products were all listed as "crop", so a crop tile still finds them
+            if any(c not in ANIMAL_CATEGORIES for c in wanted):
+                wanted.add(ProductCategory.CROP)
+            query = query.filter(Product.category.in_(wanted)) if wanted else query.filter(false())
+
+        if availability:
+            statuses = [AvailabilityStatus(a) for a in availability if a in AVAILABILITY_VALUES]
+            query = query.filter(Product.availability.in_(statuses)) if statuses else query.filter(false())
+
+        if locations:
+            # "Kano" matches "Kano" and "Kano, Nigeria"
+            clauses = []
+            for raw in locations:
+                loc = raw.strip().lower()
+                if loc:
+                    clauses += [func.lower(Product.location) == loc, func.lower(Product.location).like(f"{loc},%")]
+            if clauses:
+                query = query.filter(or_(*clauses))
+
+        if max_price is not None:
+            effective_price = Product.price * (1 - func.coalesce(Product.discount_percentage, 0) / 100.0)
+            query = query.filter(effective_price <= max_price)
+
+        total = query.order_by(None).count()
+        products = (
+            query.order_by(Product.created_at.desc(), Product.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        return products, total
+
+    def get_marketplace_locations(self) -> List[str]:
+        """Distinct towns of listed products ("Kano, Nigeria" -> "Kano"), for the location filter."""
+        rows = self.db.query(Product.location).filter(Product.is_listed == True).distinct().all()  # noqa: E712
+        towns = {}
+        for (location,) in rows:
+            town = str(location or "").split(",")[0].strip()
+            if town:
+                towns.setdefault(town.lower(), town)
+        return sorted(towns.values(), key=str.lower)
+
     def get_products_count(self) -> int:
         """Get total count of ALL products in the database"""
         return self.db.query(func.count(Product.id)).scalar() or 0

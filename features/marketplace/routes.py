@@ -22,14 +22,29 @@ router = APIRouter(prefix="/marketplace", tags=["Marketplace"])
 
 @router.get("/products", response_model=ProductSearchResponse)
 async def get_all_products(
-    skip: int = 0, 
-    limit: int = 100,
+    page: int = Query(1, ge=1, description="1-based page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Products per page"),
+    q: Optional[str] = Query(None, description="Search name, description, location, category, farmer or farm"),
+    category: Optional[List[str]] = Query(None, description="Category value (repeatable); 'protein' = all animal categories"),
+    availability: Optional[List[str]] = Query(None, description="in_stock / out_of_stock (repeatable)"),
+    location: Optional[List[str]] = Query(None, description="Town, e.g. Kano (repeatable)"),
+    max_price: Optional[float] = Query(None, ge=0, description="Highest price after discount"),
+    skip: Optional[int] = Query(None, ge=0, include_in_schema=False),
+    limit: Optional[int] = Query(None, ge=1, le=100, include_in_schema=False),
     db: Session = Depends(get_db)
 ):
     service = MarketplaceService(db)
-    
-    # Get all products without any filters
-    products = service.get_all_products(skip=skip, limit=limit)
+
+    # Older clients page with skip/limit; turn that into page/page_size
+    if limit is not None:
+        page_size = limit
+    if skip is not None:
+        page = skip // page_size + 1
+
+    products, total_count = service.list_marketplace_products(
+        page=page, page_size=page_size, q=q, categories=category,
+        availability=availability, locations=location, max_price=max_price,
+    )
     
     # One query for every listed product's farm profile (not one per product)
     farmer_ids = {product.farmer_id for product in products}
@@ -75,17 +90,20 @@ async def get_all_products(
             is_listed=product.is_listed
         ))
     
-    # Get total count for pagination
-    total_count = service.get_total_product_count()
-    
     return ProductSearchResponse(
         products=public_products,
         total_count=total_count,
-        page=skip // limit + 1 if limit > 0 else 1,
-        page_size=limit,
-        has_next=(skip + limit) < total_count,
-        has_previous=skip > 0
+        page=page,
+        page_size=page_size,
+        total_pages=max(1, -(-total_count // page_size)),
+        has_next=page * page_size < total_count,
+        has_previous=page > 1
     )
+
+@router.get("/products/locations")
+async def get_product_locations(db: Session = Depends(get_db)):
+    """Towns with listed products, for the marketplace location filter."""
+    return {"locations": MarketplaceService(db).get_marketplace_locations()}
 
 # Categories endpoint
 @router.get("/categories")
