@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     SUPABASE_S3_ACCESS_KEY_ID: Optional[str] = None
     SUPABASE_S3_SECRET_ACCESS_KEY: Optional[str] = None
     SUPABASE_S3_REGION: str = "eu-west-1"
-    SUPABASE_STORAGE_BUCKET: str = "product-images"
+    SUPABASE_STORAGE_BUCKET: str = "Bigfarm_Storage"
 
     # Paystack (checkout payments). Use the sk_test_... key until going live.
     PAYSTACK_SECRET_KEY: Optional[str] = None

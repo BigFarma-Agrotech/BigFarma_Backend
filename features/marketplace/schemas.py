@@ -5,12 +5,7 @@ from utils.units import is_count_unit, normalize_unit, parse_quantity
 from datetime import datetime
 from enum import Enum
 
-class ProductCategory(str, Enum):
-    VEGETABLES = "vegetables"
-    FRUITS = "fruits"
-    GRAINS = "grains"
-    CROP = "crop"
-    LIVESTOCK = "livestock"
+from features.marketplace.models import ProductCategory  # one list for the API and the database
 
 class AvailabilityStatus(str, Enum):
     IN_STOCK = "in_stock"
