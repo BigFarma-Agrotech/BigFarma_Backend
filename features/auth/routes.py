@@ -98,9 +98,19 @@ async def verify_otp(otp_verify: OTPVerify, db: Session = Depends(get_db)):
             success = auth_service.mark_user_verified(user.id)
             if not success:
                 raise HTTPException(status_code=500, detail="Error updating verification status")
-            # Delete the verified OTP
-            auth_service.delete_verified_otp(user.id, otp_verify.medium, otp_verify.otp_type)
-        return {"message": "Account verified successfully"}
+        # The code is spent either way
+        auth_service.delete_verified_otp(user.id, otp_verify.medium, otp_verify.otp_type)
+
+        # The code proves they own the email/phone, so sign them straight in
+        # with the same Token payload /auth/login returns
+        return {
+            "message": "Account verified successfully",
+            "access_token": create_access_token(data={"sub": str(user.id)}),
+            "refresh_token": create_refresh_token(data={"sub": str(user.id)}),
+            "token_type": "bearer",
+            "user_category": user.category.value,
+            "profile_setup": user.profile_setup,
+        }
     
     elif otp_verify.otp_type == OTPType.PASSWORD_RESET:
         # For password reset, just mark OTP as verified (password reset happens in separate endpoint)
