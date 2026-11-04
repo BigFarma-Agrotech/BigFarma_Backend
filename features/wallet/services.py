@@ -575,6 +575,11 @@ class WithdrawalService:
 
 # Paystack's bank list changes rarely; keep it for a day
 _BANKS_CACHE: Dict[str, Any] = {"banks": None, "fetched_at": None}
+# Paystack's test-mode bank: resolves any number, with no daily limit
+TEST_BANK = {"name": "Test Bank (test mode only)", "code": "001"}
+TEST_MODE_LIMIT = ("Paystack test mode only allows 3 checks of real bank accounts a day. "
+                   "Use Test Bank, or switch the server to a live Paystack key.")
+TOO_MANY_CHECKS = "Too many account checks right now. Please try again in a few minutes."
 BANKS_CACHE_TTL = timedelta(hours=24)
 
 
@@ -585,7 +590,12 @@ class BankVerificationService:
         self.db = db
 
     async def list_banks(self) -> List[Dict[str, str]]:
-        """Nigerian banks that accept transfers: [{name, code}] sorted by name."""
+        """Nigerian banks that accept transfers: [{name, code}] sorted by name, plus
+        Paystack's Test Bank when running on a test key."""
+        banks = await self._paystack_banks()
+        return [TEST_BANK, *banks] if paystack.is_test_mode() else banks
+
+    async def _paystack_banks(self) -> List[Dict[str, str]]:
         fetched_at = _BANKS_CACHE["fetched_at"]
         if _BANKS_CACHE["banks"] and fetched_at and datetime.now(timezone.utc) - fetched_at < BANKS_CACHE_TTL:
             return _BANKS_CACHE["banks"]
@@ -618,7 +628,12 @@ class BankVerificationService:
         try:
             resolved = await paystack.resolve_account(account_number, bank_code)
         except paystack.PaystackError as exc:
-            if exc.status_code == 503:
+            # Only a refusal about this account means it wasn't found; limits and
+            # outages aren't the farmer's mistake, so say what actually happened
+            if exc.upstream_status == 429:
+                logger.warning("Paystack account lookup rate-limited: %s", exc.message)
+                raise PaymentGatewayError(TEST_MODE_LIMIT if paystack.is_test_mode() else TOO_MANY_CHECKS)
+            if exc.status_code == 503 or exc.upstream_status is None or exc.upstream_status >= 500:
                 raise PaymentGatewayError(GATEWAY_UNAVAILABLE)
             raise BankAccountVerificationError(not_found)
         account_name = str(resolved.get("account_name") or "").strip()

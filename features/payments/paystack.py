@@ -15,16 +15,24 @@ TIMEOUT_SECONDS = 20
 
 
 class PaystackError(Exception):
-    """A Paystack call failed; `message` is safe to show the buyer."""
+    """A Paystack call failed; `message` is safe to show the buyer. `upstream_status` is
+    the HTTP status Paystack answered with (None when it couldn't be reached)."""
 
-    def __init__(self, message: str, status_code: int = 502):
+    def __init__(self, message: str, status_code: int = 502, upstream_status: Optional[int] = None):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+        self.upstream_status = upstream_status
 
 
 def is_configured() -> bool:
     return bool(settings.PAYSTACK_SECRET_KEY)
+
+
+def is_test_mode() -> bool:
+    """A test secret key: no real money moves, and Paystack allows only 3 lookups of
+    real bank accounts a day (its Test Bank, code 001, has no limit)."""
+    return (settings.PAYSTACK_SECRET_KEY or "").startswith("sk_test_")
 
 
 def _headers() -> Dict[str, str]:
@@ -48,7 +56,8 @@ async def _request(method: str, path: str, json: Optional[dict] = None) -> Dict[
         body = {}
     if response.status_code >= 400 or not body.get("status"):
         logger.error("Paystack %s %s -> %s %s", method, path, response.status_code, body)
-        raise PaystackError(body.get("message") or "The payment service returned an error. Please try again.")
+        raise PaystackError(body.get("message") or "The payment service returned an error. Please try again.",
+                            upstream_status=response.status_code)
     return body.get("data") or {}
 
 

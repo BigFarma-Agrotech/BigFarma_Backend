@@ -33,7 +33,7 @@ def gateway(monkeypatch):
 
     async def resolve_account(account_number, bank_code):
         if (account_number, bank_code) not in ACCOUNTS:
-            raise paystack.PaystackError("Could not resolve account name")
+            raise paystack.PaystackError("Could not resolve account name", upstream_status=422)
         return {"account_number": account_number, "account_name": ACCOUNTS[(account_number, bank_code)]}
 
     async def create_recipient(account_name, account_number, bank_code):
@@ -89,7 +89,9 @@ def test_link_bank_accounts(env, gateway):
     current["user_id"] = farmer_id
 
     banks = client.get(f"{API}/banks").json()["banks"]
-    assert banks == [{"name": "Access Bank", "code": "044"}, {"name": "Guaranty Trust Bank", "code": "058"}]
+    # On a test key Paystack's Test Bank comes first, then the real banks by name
+    assert banks == [{"name": "Test Bank (test mode only)", "code": "001"},
+                     {"name": "Access Bank", "code": "044"}, {"name": "Guaranty Trust Bank", "code": "058"}]
 
     looked_up = client.post(f"{API}/bank-accounts/verify", json={"account_number": "0123456789", "bank_code": "058"})
     assert looked_up.status_code == 200 and looked_up.json()["account_name"] == "ADA OBI FARMS"
@@ -183,3 +185,30 @@ def test_pending_transfer_settles_by_webhook(env, gateway):
     # A completed transfer the bank later reverses goes back to the wallet too
     _webhook(client, "transfer.reversed", first["reference"])
     assert _balance(farmer_id) == 5000
+
+
+def test_lookup_limits_and_outages_are_not_reported_as_wrong_accounts(env, gateway, monkeypatch):
+    client, current, farmer_id, _, _, _ = env
+    current["user_id"] = farmer_id
+    body = {"account_number": "0123456789", "bank_code": "058"}
+
+    async def rate_limited(account_number, bank_code):
+        raise paystack.PaystackError("Test mode daily limit of 3 live bank resolves exceeded.", upstream_status=429)
+    monkeypatch.setattr(paystack, "resolve_account", rate_limited)
+
+    # Test key: say it's Paystack's test-mode limit, not that the account is wrong
+    res = client.post(f"{API}/bank-accounts/verify", json=body)
+    assert res.status_code == 502 and "test mode" in res.json()["detail"] and "couldn't find" not in res.json()["detail"]
+
+    # Live key: no Test Bank, and a plain "try again" for the limit
+    monkeypatch.setattr(settings, "PAYSTACK_SECRET_KEY", "sk_live_fake")
+    assert all(b["code"] != "001" for b in client.get(f"{API}/banks").json()["banks"])
+    res = client.post(f"{API}/bank-accounts/verify", json=body)
+    assert res.status_code == 502 and "Too many account checks" in res.json()["detail"]
+
+    # Paystack down or unreachable: temporarily unavailable
+    async def down(account_number, bank_code):
+        raise paystack.PaystackError("We couldn't reach the payment service. Please try again.")
+    monkeypatch.setattr(paystack, "resolve_account", down)
+    res = client.post(f"{API}/bank-accounts/verify", json=body)
+    assert res.status_code == 502 and "temporarily unavailable" in res.json()["detail"]
