@@ -81,3 +81,26 @@ def test_server_side_filters(env):
 
     locations = client.get(URL + "/locations").json()["locations"]
     assert {"Kano", "Lagos", "Oyo"} <= set(locations)
+
+
+def test_price_range_filter_and_bounds(env):
+    client, _, farmer_id, _, _, _ = env
+    db = _db()
+    _add(db, farmer_id, "Cheap Pepper", price=300)
+    _add(db, farmer_id, "Mid Yam", price=4000)
+    _add(db, farmer_id, "Pricey Tomato", price=10000, discount_percentage=50)  # sells at 5000
+    _add(db, farmer_id, "Big Goat", category=ProductCategory.LIVESTOCK, price=90000)
+    _add(db, farmer_id, "Unlisted Gold", price=999999, is_listed=False)
+    db.commit()
+
+    # Both ends inclusive, compared on the discounted price
+    middle = _names(client.get(URL, params={"min_price": 4000, "max_price": 5000, "page_size": 100}))
+    assert {"Mid Yam", "Pricey Tomato"} <= middle
+    assert not {"Cheap Pepper", "Big Goat"} & middle
+    assert "Big Goat" in _names(client.get(URL, params={"min_price": 50000, "page_size": 100}))
+    assert client.get(URL, params={"min_price": -1}).status_code == 422
+
+    # Slider bounds cover listed products only, after discount
+    bounds = client.get(URL + "/price-range").json()
+    assert bounds["max_price"] == 90000
+    assert bounds["min_price"] <= 300

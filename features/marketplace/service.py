@@ -163,6 +163,7 @@ class MarketplaceService:
         availability: Optional[List[str]] = None,
         locations: Optional[List[str]] = None,
         max_price: Optional[float] = None,
+        min_price: Optional[float] = None,
     ) -> tuple[List[Product], int]:
         """One page of listed products matching the marketplace filters, plus the total match count."""
         query = self.db.query(Product).filter(Product.is_listed == True)  # noqa: E712
@@ -210,9 +211,11 @@ class MarketplaceService:
             if clauses:
                 query = query.filter(or_(*clauses))
 
+        # Prices are compared after any discount, as buyers see them
+        if min_price is not None:
+            query = query.filter(self._effective_price() >= min_price)
         if max_price is not None:
-            effective_price = Product.price * (1 - func.coalesce(Product.discount_percentage, 0) / 100.0)
-            query = query.filter(effective_price <= max_price)
+            query = query.filter(self._effective_price() <= max_price)
 
         total = query.order_by(None).count()
         products = (
@@ -222,6 +225,16 @@ class MarketplaceService:
             .all()
         )
         return products, total
+
+    @staticmethod
+    def _effective_price():
+        return Product.price * (1 - func.coalesce(Product.discount_percentage, 0) / 100.0)
+
+    def get_marketplace_price_range(self) -> dict:
+        """Lowest and highest price after discount among listed products, for the price slider."""
+        price = self._effective_price()
+        low, high = self.db.query(func.min(price), func.max(price)).filter(Product.is_listed == True).one()  # noqa: E712
+        return {"min_price": float(low or 0), "max_price": float(high or 0)}
 
     def get_marketplace_locations(self) -> List[str]:
         """Distinct towns of listed products ("Kano, Nigeria" -> "Kano"), for the location filter."""

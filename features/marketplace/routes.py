@@ -29,6 +29,7 @@ async def get_all_products(
     availability: Optional[List[str]] = Query(None, description="in_stock / out_of_stock (repeatable)"),
     location: Optional[List[str]] = Query(None, description="Town, e.g. Kano (repeatable)"),
     max_price: Optional[float] = Query(None, ge=0, description="Highest price after discount"),
+    min_price: Optional[float] = Query(None, ge=0, description="Lowest price after discount"),
     skip: Optional[int] = Query(None, ge=0, include_in_schema=False),
     limit: Optional[int] = Query(None, ge=1, le=100, include_in_schema=False),
     db: Session = Depends(get_db)
@@ -44,6 +45,7 @@ async def get_all_products(
     products, total_count = service.list_marketplace_products(
         page=page, page_size=page_size, q=q, categories=category,
         availability=availability, locations=location, max_price=max_price,
+        min_price=min_price,
     )
     
     # One query for every listed product's farm profile (not one per product)
@@ -104,6 +106,11 @@ async def get_all_products(
 async def get_product_locations(db: Session = Depends(get_db)):
     """Towns with listed products, for the marketplace location filter."""
     return {"locations": MarketplaceService(db).get_marketplace_locations()}
+
+@router.get("/products/price-range")
+async def get_product_price_range(db: Session = Depends(get_db)):
+    """Cheapest and dearest listed product (after discount), for the marketplace price slider."""
+    return MarketplaceService(db).get_marketplace_price_range()
 
 # Categories endpoint
 @router.get("/categories")
