@@ -22,7 +22,8 @@ def _second_buyer():
 def _pay(client, current, user_id, group_id, quantity, status="success"):
     current["user_id"] = user_id
     res = client.post(f"/api/v1/groups/{group_id}/checkout", json={
-        "quantity": quantity, "contact_name": "Ada Obi", "contact_phone": "08011112222", "callback_url": CALLBACK})
+        "quantity": quantity, "contact_name": "Ada Obi", "contact_phone": "08011112222",
+        "delivery_address": f"{user_id} Admiralty Way, Lekki", "callback_url": CALLBACK})
     if res.status_code != 201:
         return res
     paystack_state["status"] = status
@@ -217,3 +218,51 @@ def test_minimum_share_and_top_ups(env):
     assert _pay(client, current, buyer2, group_id, 2).json()["status"] == "success"
     current["user_id"] = farmer_id
     assert [o["quantity_ordered"] for o in client.get("/api/v1/orders/farmer/orders").json()["items"]] == ["10 kg"]
+
+
+def test_member_details_come_from_profile_and_each_share_has_an_address(env):
+    from features.users.models import ConsumerProfile
+    from features.marketplace.models import Order
+    client, current, farmer_id, consumer_id, product_id, _ = env
+    db = _db()
+    product = db.get(Product, product_id)
+    product.unit, product.quantity = "kg", "30 kg"
+    user = db.get(User, consumer_id)
+    user.phone_number = "+2348099998888"
+    db.add(ConsumerProfile(user_id=consumer_id, first_name="Chioma", last_name="Eze", address="1 Home St"))
+    db.commit()
+    buyer2 = _second_buyer()
+
+    current["user_id"] = consumer_id
+    res = client.post("/api/v1/groups", json={
+        "group_name": "Yaba Cabbage", "group_location": "Yaba", "product_id": product_id,
+        "target_quantity": "5 kg", "target_quantity_numeric": 5})
+    group_id = res.json()["public_id"]
+
+    # An address is required to join
+    no_address = client.post(f"/api/v1/groups/{group_id}/checkout", json={"quantity": 2, "callback_url": CALLBACK})
+    assert no_address.status_code == 400 and "address" in no_address.text
+
+    # Only the address is sent: name and phone come from the profile, not what a client types
+    res = client.post(f"/api/v1/groups/{group_id}/checkout", json={
+        "quantity": 2, "delivery_address": "12 Herbert Macaulay Way, Yaba",
+        "contact_name": "Someone Else", "contact_phone": "000", "callback_url": CALLBACK})
+    assert res.status_code == 201, res.text
+    client.get(f"/api/v1/payments/verify/{res.json()['reference']}")
+    from features.group_buy.models import GroupMember
+    member = _db().query(GroupMember).filter(GroupMember.user_id == consumer_id).one()
+    assert (member.contact_name, member.contact_phone, member.delivery_address) == (
+        "Chioma Eze", "+2348099998888", "12 Herbert Macaulay Way, Yaba")
+
+    # The list shows members and units ordered
+    mine = [g for g in client.get("/api/v1/groups").json() if g["public_id"] == group_id][0]
+    assert (mine["members_count"], mine["current_quantity"], mine["progress_percentage"]) == (1, 2, 40)
+    public = [g for g in client.get("/api/v1/groups/public").json() if g["public_id"] == group_id][0]
+    assert public["members_count"] == 1
+
+    # Buyer 2 has no profile phone, so the one they give is used; the group fills
+    assert _pay(client, current, buyer2, group_id, 3).json()["status"] == "success"
+    order = _db().query(Order).filter(Order.group_id.isnot(None)).one()
+    assert "their address" in order.delivery_address
+    assert "Chioma Eze (+2348099998888): 2 kg to 12 Herbert Macaulay Way, Yaba" in order.delivery_notes
+    assert f"3 kg to {buyer2} Admiralty Way, Lekki" in order.delivery_notes

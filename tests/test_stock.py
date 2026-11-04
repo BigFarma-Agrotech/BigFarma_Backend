@@ -74,7 +74,8 @@ def test_group_shares_reserve_stock_and_expiry_returns_it(env, monkeypatch):
         "target_quantity": "20 kg", "target_quantity_numeric": 20}).json()["public_id"]
 
     ref = client.post(f"/api/v1/groups/{group_id}/checkout", json={
-        "quantity": 5, "contact_name": "Ada", "contact_phone": "08011112222", "callback_url": CALLBACK}).json()["reference"]
+        "quantity": 5, "contact_name": "Ada", "contact_phone": "08011112222",
+        "delivery_address": "3 Herbert Macaulay Way, Yaba", "callback_url": CALLBACK}).json()["reference"]
     client.get(f"/api/v1/payments/verify/{ref}")
     assert _stock(product_id)[0] == "25 kg"  # 5 kg reserved for the group
 

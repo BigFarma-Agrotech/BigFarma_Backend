@@ -36,13 +36,17 @@ PURPOSE = "group_buy"
 
 class GroupCheckoutRequest(BaseModel):
     quantity: float = Field(..., gt=0)
-    # Needed when joining; a member topping up keeps the contact they gave before
+    # Where the farmer delivers this member's share; needed when joining. A member
+    # topping up keeps the address they gave before.
+    delivery_address: Optional[str] = Field(None, max_length=300)
+    # Name and phone come from the member's profile; these are only used when the
+    # profile has none (older clients still send them)
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
     email: Optional[str] = None
     callback_url: str
 
-    @field_validator("contact_name", "contact_phone", "email")
+    @field_validator("delivery_address", "contact_name", "contact_phone", "email")
     @classmethod
     def blank_is_none(cls, v: Optional[str]) -> Optional[str]:
         return v.strip() if v and v.strip() else None
@@ -56,6 +60,19 @@ def unit_price(group: GroupBuy) -> float:
 
 def remaining_quantity(group: GroupBuy) -> float:
     return max(round((group.target_quantity_numeric or 0) - (group.current_quantity or 0), 6), 0)
+
+
+def profile_name(user: User) -> Optional[str]:
+    """The member's full name from their consumer or farmer profile."""
+    consumer = getattr(user, "consumer_profile", None)
+    if consumer:
+        name = " ".join(filter(None, [consumer.first_name, consumer.last_name])).strip()
+        if name:
+            return name
+    farmer = getattr(user, "farmer_profile", None)
+    if farmer and (farmer.full_name or "").strip():
+        return farmer.full_name.strip()
+    return None
 
 
 def join_minimum(group: GroupBuy) -> float:
@@ -107,8 +124,15 @@ class GroupPaymentService:
         else:
             if group.max_members and len(active) >= group.max_members:
                 raise CheckoutError("This group is full.")
-            if not data.contact_name or not data.contact_phone:
-                raise CheckoutError("Enter your name and phone number for the group's delivery.")
+            # The profile is the source of truth for who the member is
+            contact_name = profile_name(user) or data.contact_name
+            contact_phone = (user.phone_number or "").strip() or data.contact_phone
+            if not contact_name:
+                raise CheckoutError("Add your name to your profile before joining a group.")
+            if not contact_phone:
+                raise CheckoutError("Add a phone number to your profile before joining a group.")
+            if not data.delivery_address or len(data.delivery_address) < 5:
+                raise CheckoutError("Enter the address the farmer should deliver your share to.")
             minimum = join_minimum(group)
             if data.quantity + 1e-9 < minimum:
                 raise CheckoutError(f"Each member buys at least {format_quantity(minimum, unit)} in this group.")
@@ -123,7 +147,8 @@ class GroupPaymentService:
             member = GroupMember(
                 group_id=group.id, user_id=user.id, status=GroupMemberStatus.PENDING,
                 quantity_committed=0.0, contribution_amount=0.0,
-                contact_name=data.contact_name, contact_phone=data.contact_phone,
+                contact_name=contact_name, contact_phone=contact_phone,
+                delivery_address=data.delivery_address,
             )
             self.db.add(member)
             self.db.flush()
@@ -315,6 +340,15 @@ class GroupPaymentService:
             GroupMember.group_id == group.id, GroupMember.status == GroupMemberStatus.ACTIVE
         ).first()
 
+        # Each member's share goes to the address they gave when joining
+        paid_members = [m for m in group.members if m.status == GroupMemberStatus.ACTIVE]
+        drop_offs = "\n".join(
+            f"- {m.contact_name or 'Member'} ({m.contact_phone or 'no phone'}): "
+            f"{format_quantity(m.quantity_committed or 0, unit)} to "
+            f"{m.delivery_address or group.group_location}"
+            for m in paid_members
+        )
+
         group.status = GroupStatus.COMPLETED
         group.completed_at = datetime.now(timezone.utc)
         order = Order(
@@ -322,8 +356,9 @@ class GroupPaymentService:
             consumer_id=group.creator_id,
             quantity_ordered=format_quantity(group.current_quantity, unit),
             total_price=round(group.group_wallet_balance or 0, 2),
-            delivery_address=(f"Group buy '{group.group_name}', {group.group_location}"
-                              + (f" (Contact: {contact.contact_name}, {contact.contact_phone})" if contact else "")),
+            delivery_address=(f"Group buy '{group.group_name}' ({group.group_location}): deliver each "
+                              f"member's share to their address, listed in the delivery notes"),
+            delivery_notes=f"{len(paid_members)} member(s):\n{drop_offs}" if paid_members else None,
             contact_phone=contact.contact_phone if contact else None,
             status=OrderStatus.PENDING,
             payment_status=OrderPaymentStatus.PAID,

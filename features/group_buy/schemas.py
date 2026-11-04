@@ -96,6 +96,8 @@ class GroupBuyResponse(GroupBuyBase):
     product_public_id: Optional[str] = None
     # The product's first picture, shown as the group's cover
     product_image: Optional[str] = None
+    # Members who have paid for a share (progress shows them with the units ordered)
+    members_count: int = 0
     shareable_link: str
     creator_id: int
     status: GroupStatusEnum

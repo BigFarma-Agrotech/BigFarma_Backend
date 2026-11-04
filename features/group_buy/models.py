@@ -70,6 +70,11 @@ class GroupBuy(Base):
         return self.product.public_id if self.product else None
 
     @property
+    def members_count(self):
+        """Members who have paid for a share."""
+        return sum(1 for m in self.members if m.status == GroupMemberStatus.ACTIVE)
+
+    @property
     def product_image(self):
         """The product's first picture as a URL, used as the group's cover; None if it has none."""
         if not self.product:
@@ -95,9 +100,11 @@ class GroupMember(Base):
     # Contribution
     contribution_amount = Column(Float, default=0.0)  # Amount this member has contributed
     quantity_committed = Column(Float, default=0.0)  # Quantity this member committed to
-    # Contact for the group's delivery, given when paying
+    # Contact for the member's delivery: name and phone come from their profile,
+    # the address is entered when joining (the farmer delivers each share there)
     contact_name = Column(String, nullable=True)
     contact_phone = Column(String, nullable=True)
+    delivery_address = Column(Text, nullable=True)
     
     # Invitation details
     invited_by = Column(Integer, ForeignKey("users.id"), nullable=True)
