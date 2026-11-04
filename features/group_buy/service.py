@@ -822,6 +822,7 @@ class GroupBuyService:
                     product_name=group.product.name,
                     product_category=group.product.category,
                     product_price=group.product.price,
+                    product_image=group.product_image,
                     target_quantity=group.target_quantity,
                     quantity_unit=group.quantity_unit,
                     progress_percentage=group.progress_percentage,

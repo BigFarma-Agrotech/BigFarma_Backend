@@ -94,6 +94,8 @@ class GroupBuyResponse(GroupBuyBase):
     id: int
     public_id: str
     product_public_id: Optional[str] = None
+    # The product's first picture, shown as the group's cover
+    product_image: Optional[str] = None
     shareable_link: str
     creator_id: int
     status: GroupStatusEnum
@@ -267,6 +269,7 @@ class GroupPublicResponse(BaseModel):
     product_name: str
     product_category: str
     product_price: float
+    product_image: Optional[str] = None
     target_quantity: str
     quantity_unit: str
     progress_percentage: float

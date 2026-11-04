@@ -47,3 +47,26 @@ def test_public_group_routes_are_reachable(env):
     assert by_id.status_code == by_link.status_code == 200, (by_id.text, by_link.text)
     assert by_id.json()["group"]["group_name"] == by_link.json()["group"]["group_name"] == "Lekki Cabbage Group"
     assert client.get("/api/v1/groups/public/nope").status_code == 404
+
+
+def test_group_lists_carry_the_product_picture_as_cover(env):
+    client, current, _, consumer_id, product_id, _ = env
+    from tests.test_stock import _db
+    from features.marketplace.models import Product
+    db = _db()
+    db.get(Product, product_id).images = "https://example.com/cabbage.jpg,https://example.com/other.jpg"
+    db.commit()
+    public_id = _make_group(consumer_id, product_id)
+
+    listed = client.get("/api/v1/groups/public").json()
+    assert listed[0]["product_image"] == "https://example.com/cabbage.jpg"
+
+    current["user_id"] = consumer_id
+    mine = client.get("/api/v1/groups")
+    assert mine.status_code == 200, mine.text
+    assert [g["product_image"] for g in mine.json() if g["public_id"] == public_id] == ["https://example.com/cabbage.jpg"]
+
+    # No picture on the product: no cover, not an error
+    db.get(Product, product_id).images = ""
+    db.commit()
+    assert client.get("/api/v1/groups/public").json()[0]["product_image"] is None

@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
 from utils.public_id import generate_public_id
+from utils.product_images import public_images
 import enum
 import uuid
 
@@ -67,6 +68,14 @@ class GroupBuy(Base):
     @property
     def product_public_id(self):
         return self.product.public_id if self.product else None
+
+    @property
+    def product_image(self):
+        """The product's first picture as a URL, used as the group's cover; None if it has none."""
+        if not self.product:
+            return None
+        images = public_images(self.product)
+        return images[0] if images else None
     members = relationship("GroupMember", back_populates="group", cascade="all, delete-orphan")
     transactions = relationship("GroupTransaction", back_populates="group", cascade="all, delete-orphan")
     chat = relationship("GroupChat", back_populates="group", uselist=False, cascade="all, delete-orphan")
